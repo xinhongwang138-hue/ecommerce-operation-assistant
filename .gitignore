@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.next/
+uploads/
+*.tar
+*.tar.gz
+.env.*
+!.env.example
