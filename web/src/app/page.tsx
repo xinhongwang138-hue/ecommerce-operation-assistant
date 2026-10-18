@@ -10,6 +10,7 @@ import {
   ImageIcon,
   Megaphone,
   Package,
+  ScanText,
   Settings,
   Store as StoreIcon,
 } from "lucide-react";
@@ -110,6 +111,13 @@ export default async function Home({ searchParams }: HomeProps) {
               登录
             </Link>
           )}
+          <Link
+            href="/ocr"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <ScanText className="h-4 w-4" aria-hidden="true" />
+            图片取字
+          </Link>
           <Link
             href="/settings"
             className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"

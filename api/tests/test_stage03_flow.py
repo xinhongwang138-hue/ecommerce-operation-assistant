@@ -79,9 +79,19 @@ def test_competitor_creative_performance_review_flow(client):
         assert len(detail[key]) == 1, key
 
 
-def test_diagnosis_generate_rules_fallback_and_writes(client):
+def test_diagnosis_generate_rules_fallback_and_writes(client, monkeypatch):
     # 第15章起诊断接口已实现：未配置模型时按课程约定回退 rules 并落库；
     # 原第03篇“返回501且不写库”的边界由 test_stage15_routes.py 接替验证。
+    # 显式把模型置为不可用：本地 .env 一旦配上真实 Key，接口会走 LLM，
+    # 断言 source == 'rules' 就会因环境不同而失败（2026-10-18 实测踩过）。
+    from app.services import diagnosis
+    from app.services.llm import LLMNotConfiguredError
+
+    def unavailable(*args, **kwargs):
+        raise LLMNotConfiguredError('边界用例：本用例只验证未配置模型时的规则回退')
+
+    monkeypatch.setattr(diagnosis, 'create_json_chat_completion', unavailable)
+
     item = product(client)
     response = client.post(f"/api/v1/products/{item['id']}/diagnoses/generate")
     assert response.status_code == 201, response.text

@@ -1296,3 +1296,25 @@ class AgentMemoryRead(BaseModel):
     revoked_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class OcrExtractRequest(BaseModel):
+    # 前端直接把图片读成 base64 提交，避免为了取字再引入 multipart 依赖和临时文件清理。
+    image_base64: str = Field(min_length=16)
+    mime_type: str = Field(default="image/png", max_length=64)
+    prompt: str | None = Field(default=None, max_length=500)
+
+
+class OcrExtractResult(BaseModel):
+    text: str
+    lines: list[str] = Field(default_factory=list)
+    model: str
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
+class OcrStatusRead(BaseModel):
+    # 只暴露脱敏信息：前端用它决定是否提示"未配置模型"。
+    configured: bool
+    model: str
+    base_url: str
+    max_image_bytes: int

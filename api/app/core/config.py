@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, alias="LLM_MODEL")
+    # 图片取字（OCR）单列一组配置：默认沿用文本模型的地址与密钥，只换模型名，
+    # 这样接入方只要多配一个 OCR_MODEL 就能用，不必重复填 key。
+    ocr_model: str = Field(default="qwen-vl-ocr-2025-11-20", alias="OCR_MODEL")
+    ocr_base_url: str | None = Field(default=None, alias="OCR_BASE_URL")
+    ocr_api_key: str | None = Field(default=None, alias="OCR_API_KEY")
+    ocr_max_image_bytes: int = Field(default=8 * 1024 * 1024, alias="OCR_MAX_IMAGE_BYTES")
     image_provider: str | None = Field(default="jimeng", alias="IMAGE_PROVIDER")
     image_base_url: str | None = Field(default="https://visual.volcengineapi.com", alias="IMAGE_BASE_URL")
     image_api_key: str | None = Field(default=None, alias="IMAGE_API_KEY")
