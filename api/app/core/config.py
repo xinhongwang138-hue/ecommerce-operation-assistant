@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     video_workspace_id: str | None = Field(default=None, alias="VIDEO_WORKSPACE_ID")
     video_poll_interval_seconds: int = Field(default=10, alias="VIDEO_POLL_INTERVAL_SECONDS")
     video_poll_max_attempts: int = Field(default=36, alias="VIDEO_POLL_MAX_ATTEMPTS")
+    # 数字人（魔珐星云）凭证：只存后端 .env，经 GET /api/v1/digital-human/credentials 下发前端，
+    # 避免 AppSecret 进入前端源码。留空时接口返回空串，前端提示未配置而不报错。
+    digital_human_app_id: str = Field(default="", alias="DIGITAL_HUMAN_APP_ID")
+    digital_human_app_secret: str = Field(default="", alias="DIGITAL_HUMAN_APP_SECRET")
+    digital_human_gateway_server: str = Field(
+        default="https://nebula-agent.xingyun3d.com/user/v1/ttsa/session",
+        alias="DIGITAL_HUMAN_GATEWAY_SERVER",
+    )
 
     #核心方法是读取本地的.env文件覆盖当前对象中的变量值 
     # 推荐写成绝对路径的形式 指定固定的.env文件

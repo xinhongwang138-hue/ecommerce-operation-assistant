@@ -11,3 +11,9 @@ uploads/
 *.tar.gz
 .env.*
 !.env.example
+
+# 本地运行时产物：日志、PID、临时启动输出，不入库
+logs/
+*.log
+*.pid
+tmp_uvicorn_*.log

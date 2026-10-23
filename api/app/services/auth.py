@@ -30,6 +30,22 @@ def create_access_token(user: User, settings: Settings | None = None) -> str:
     return f"{encoded_payload}.{signature}"
 
 
+def create_ws_ticket(user: User, *, ttl_seconds: int = 60, settings: Settings | None = None) -> str:
+    """创建短时效 WebSocket 票据；与登录态同密钥签名，但带 purpose 声明且默认 60 秒过期。"""
+    # 浏览器无法自带 Authorization 头建 WebSocket，长时效登录态放进 URL 风险过大，
+    # 因此只签发一次性短票据：前端先用登录态换 ticket，再带 ticket 连接 /ws/chat。
+    settings = settings or get_settings()
+    expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+    payload = {
+        "sub": str(user.id),
+        "purpose": "ws_ticket",
+        "exp": int(expires_at.timestamp()),
+    }
+    encoded_payload = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = _sign(encoded_payload, settings.auth_secret_key)
+    return f"{encoded_payload}.{signature}"
+
+
 def parse_access_token(token: str, settings: Settings | None = None) -> dict[str, Any]:
     """解析访问Token；集中执行业务校验、状态变更与持久化，并返回可验证结果。"""
     # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
