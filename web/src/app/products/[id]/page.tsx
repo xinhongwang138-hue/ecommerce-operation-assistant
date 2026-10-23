@@ -1,5 +1,4 @@
 import {
-  ArrowLeft,
   ArrowRight,
   Brain,
   CheckCircle2,
@@ -21,6 +20,7 @@ import { AgentRunPanel } from "@/components/agent-run-panel";
 import { CreativePlanStatusActions } from "@/components/creative-plan-status-actions";
 import { DiagnosisEditForm } from "@/components/diagnosis-edit-form";
 import { GenerationJobAutoRefresh } from "@/components/generation-job-auto-refresh";
+import { GenerationJobList } from "@/components/job-list";
 import { MainImagePlanEditForm } from "@/components/main-image-plan-edit-form";
 import { PerformanceImportForm } from "@/components/performance-import-form";
 import { PerformanceRecordForm } from "@/components/performance-record-form";
@@ -137,14 +137,10 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
   const canEdit = Boolean(currentUser?.permissions.can_edit);
 
   return (
-    <main className="min-h-screen bg-[#f7f8fb] px-5 py-6 text-slate-950 lg:px-8">
+    <main className="flex flex-col gap-6">
       <GenerationJobAutoRefresh active={hasActiveGenerationJobs} />
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
+      <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-4 border-b border-slate-200 pb-5">
-          <Link href="/" className="inline-flex w-fit items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-950">
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            返回商品池
-          </Link>
 
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
@@ -672,7 +668,7 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
                 <p className="mt-2 text-sm leading-6 text-slate-800">{latestAdRecommendation.summary}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <span
-                    className={`${adRecommendationConfirmationTone(latestAdRecommendation.confirmation_status)} rounded-md px-2 py-1 text-xs font-medium`}
+                    className={`badge-gradient ${adRecommendationConfirmationTone(latestAdRecommendation.confirmation_status)}`}
                   >
                     {adRecommendationConfirmationLabel(latestAdRecommendation.confirmation_status)}
                   </span>
@@ -814,7 +810,7 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {asset.status ? (
-                        <span className={`${assetStatusTone(asset.status)} rounded-md px-2 py-1 text-xs`}>
+                        <span className={`badge-gradient ${assetStatusTone(asset.status)}`}>
                           {asset.status}
                         </span>
                       ) : null}
@@ -954,82 +950,12 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
             </span>
           </div>
 
-          {product.generation_jobs.length > 0 ? (
-            <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
-              <div className="grid grid-cols-[80px_90px_110px_1fr_170px] bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">
-                <span>ID</span>
-                <span>类型</span>
-                <span>状态</span>
-                <span>结果 / 错误</span>
-                <span>操作</span>
-              </div>
-              <div className="divide-y divide-slate-200">
-                {product.generation_jobs.map((job) => (
-                  <div
-                    key={job.id}
-                    className="grid grid-cols-[80px_90px_110px_1fr_170px] items-center gap-3 px-3 py-3 text-sm"
-                  >
-                    <span className="font-medium text-slate-700">#{job.id}</span>
-                    <span className="text-slate-600">{job.kind === "video_asset" ? "视频" : "图片"}</span>
-                    <JobStatusBadge job={job} />
-                    <div className="min-w-0">
-                      {job.status === "succeeded" && jobResultUrl(job) ? (
-                        <a
-                          href={absoluteMediaUrl(jobResultUrl(job) || "")}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-sky-700 hover:text-sky-900"
-                        >
-                          打开生成结果
-                        </a>
-                      ) : job.error ? (
-                        <p className="line-clamp-2 text-xs leading-5 text-rose-700">{job.error}</p>
-                      ) : (
-                        <p className="text-xs text-slate-500">
-                          {job.started_at ? `开始于 ${job.started_at}` : "等待后台执行"}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`/products/${product.id}/generation-jobs/${job.id}`}
-                        className="inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                      >
-                        详情
-                      </Link>
-                      {canEdit && job.status === "failed" ? (
-                        <form action={`/products/${product.id}/generation-jobs/${job.id}/retry`} method="post">
-                          <input type="hidden" name="tab" value="jobs" />
-                          <button
-                            type="submit"
-                            className="h-8 rounded-md bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800"
-                          >
-                            重试
-                          </button>
-                        </form>
-                      ) : canEdit && (job.status === "pending" || job.status === "running") ? (
-                        <form action={`/products/${product.id}/generation-jobs/${job.id}/cancel`} method="post">
-                          <input type="hidden" name="tab" value="jobs" />
-                          <button
-                            type="submit"
-                            className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            取消
-                          </button>
-                        </form>
-                      ) : (
-                        <span className="text-xs text-slate-400">-</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="mt-5 rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-              还没有生成任务。可以先到主图或视频 Tab 创建第一条生成任务。
-            </div>
-          )}
+                    <GenerationJobList
+            jobs={product.generation_jobs}
+            productId={product.id}
+            canEdit={canEdit}
+            totalCount={product.generation_jobs.length}
+          />
 
           <div className="mt-6 border-t border-slate-200 pt-5">
             <div className="flex items-center justify-between gap-4">
@@ -2960,16 +2886,16 @@ function JobStatusBadge({ job }: { job: GenerationJob | undefined }) {
     cancelled: "已取消",
   };
   const tone: Record<GenerationJob["status"], string> = {
-    pending: "bg-slate-100 text-slate-600",
-    running: "bg-amber-50 text-amber-700",
-    succeeded: "bg-emerald-50 text-emerald-700",
-    failed: "bg-rose-50 text-rose-700",
-    cancelled: "bg-slate-100 text-slate-500",
+    pending: "badge-muted",
+    running: "badge-running",
+    succeeded: "badge-success",
+    failed: "badge-danger",
+    cancelled: "badge-muted",
   };
 
   return (
     <span
-      className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${tone[job.status]}`}
+      className={`badge-gradient ${tone[job.status]}`}
     >
       {job.status === "pending" || job.status === "running" ? (
         <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
@@ -2988,14 +2914,14 @@ function LinkParseTaskStatusBadge({ status }: { status: string }) {
     failed: "失败",
   };
   const tone: Record<string, string> = {
-    pending: "bg-amber-50 text-amber-700",
-    running: "bg-sky-50 text-sky-700",
-    succeeded: "bg-emerald-50 text-emerald-700",
-    failed: "bg-rose-50 text-rose-700",
+    pending: "badge-warning",
+    running: "badge-info",
+    succeeded: "badge-success",
+    failed: "badge-danger",
   };
 
   return (
-    <span className={`w-fit rounded-md px-2 py-1 text-xs font-medium ${tone[status] ?? "bg-slate-100 text-slate-600"}`}>
+    <span className={`badge-gradient ${tone[status] ?? "badge-muted"}`}>
       {statusLabels[status] ?? status}
     </span>
   );
@@ -3253,12 +3179,12 @@ function generatedVideos(content: Record<string, unknown>): Array<{
 /** 把素材状态状态映射为视觉样式，避免组件内散落条件分支。 */
 function assetStatusTone(status: string): string {
   const tones: Record<string, string> = {
-    待评估: "bg-slate-100 text-slate-600",
-    通过: "bg-emerald-50 text-emerald-700",
-    弃用: "bg-rose-50 text-rose-700",
-    复测: "bg-amber-50 text-amber-700",
+    待评估: "badge-muted",
+    通过: "badge-success",
+    弃用: "badge-danger",
+    复测: "badge-warning",
   };
-  return tones[status] ?? "bg-slate-100 text-slate-600";
+  return tones[status] ?? "badge-muted";
 }
 
 /** 把投放建议确认状态映射为中文显示文本，保持页面口径一致。 */
@@ -3274,11 +3200,11 @@ function adRecommendationConfirmationLabel(status: string): string {
 /** 把投放建议确认状态映射为视觉样式，避免组件内散落条件分支。 */
 function adRecommendationConfirmationTone(status: string): string {
   const tones: Record<string, string> = {
-    pending: "bg-amber-100 text-amber-700",
-    confirmed: "bg-emerald-100 text-emerald-700",
-    rejected: "bg-slate-100 text-slate-600",
+    pending: "badge-warning",
+    confirmed: "badge-success",
+    rejected: "badge-muted",
   };
-  return tones[status] ?? "bg-amber-100 text-amber-700";
+  return tones[status] ?? "badge-warning";
 }
 
 /** 绝对地址媒体URL，封装当前页面重复使用的转换或展示规则，并统一处理空值边界。 */

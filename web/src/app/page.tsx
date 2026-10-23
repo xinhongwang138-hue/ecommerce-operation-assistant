@@ -1,24 +1,27 @@
 import {
   ArrowRight,
-  Bot,
   Boxes,
   Building2,
   ClipboardList,
   Database,
   Download,
   FileText,
+  Globe,
   ImageIcon,
   Megaphone,
   Package,
-  ScanText,
-  Settings,
   Store as StoreIcon,
+  Store as StoreStatIcon,
+  Package as ProductStatIcon,
+  Layers,
 } from "lucide-react";
 import Link from "next/link";
 
+import { DashboardCharts } from "@/components/dashboard-charts";
+import { StatCard } from "@/components/ui";
 import { ProductCreateForm } from "@/components/product-create-form";
 import { StoreCreateForm } from "@/components/store-create-form";
-import { getCurrentUser, getProducts, getStores } from "@/lib/api";
+import { getCurrentUser, getProducts, getStores, isBackendAvailable } from "@/lib/api";
 import { getAuthToken } from "@/lib/session";
 import type { Platform, Product, Store } from "@/types";
 
@@ -43,11 +46,11 @@ const platformFilters: Array<{ value: "all" | Platform; label: string }> = [
 ];
 
 const workflow = [
-  { title: "建店建档", icon: Building2, tone: "bg-sky-100 text-sky-700", href: "/" },
-  { title: "导入数据", icon: ClipboardList, tone: "bg-cyan-100 text-cyan-700", href: "/imports" },
-  { title: "补商品信息", icon: ImageIcon, tone: "bg-emerald-100 text-emerald-700", href: "/?workflow=product" },
-  { title: "投放建议", icon: Megaphone, tone: "bg-amber-100 text-amber-700", href: "/?workflow=ads" },
-  { title: "周期复盘", icon: FileText, tone: "bg-rose-100 text-rose-700", href: "/?workflow=review" },
+  { title: "建店建档", icon: Building2, tone: "bg-gradient-primary", href: "/" },
+  { title: "导入数据", icon: ClipboardList, tone: "bg-gradient-info", href: "/imports" },
+  { title: "补商品信息", icon: ImageIcon, tone: "bg-gradient-success", href: "/?workflow=product" },
+  { title: "投放建议", icon: Megaphone, tone: "bg-gradient-warning", href: "/?workflow=ads" },
+  { title: "周期复盘", icon: FileText, tone: "bg-gradient-danger", href: "/?workflow=review" },
 ];
 
 type HomeProps = {
@@ -63,6 +66,9 @@ export default async function Home({ searchParams }: HomeProps) {
   const [products, stores, token] = await Promise.all([getProducts(), getStores(), getAuthToken()]);
   const currentUser = token ? await getCurrentUser(token) : null;
   const canEdit = Boolean(currentUser?.permissions.can_edit);
+  // 已登录但数据全空时先探测后端：后端不可达会表现为"空数据"，需明确提示而不是静默展示空卡片。
+  const backendUnavailable =
+    token !== null && products.length === 0 && stores.length === 0 ? !(await isBackendAvailable()) : false;
 
   const storeById = new Map(stores.map((store) => [store.id, store]));
   const productsByStore = countProductsByStore(products);
@@ -80,245 +86,262 @@ export default async function Home({ searchParams }: HomeProps) {
     return true;
   });
 
+  // 仪表盘图表数据：近 7 日新增资产趋势 + 平台分布
+  const trendData = buildGrowthTrend(products, stores);
+  const ringData = buildPlatformDistribution(products, stores);
+
   return (
-    <main className="min-h-screen bg-[#f7f8fb] px-5 py-6 text-slate-950 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <div className="flex justify-end gap-2">
-          <Link
-            href="/agent"
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-cyan-700 px-3 text-sm font-medium text-white hover:bg-cyan-800"
-          >
-            <Bot className="h-4 w-4" aria-hidden="true" />
-            Agent 中心
-          </Link>
-          {currentUser ? (
-            <form action="/logout" method="post" className="inline-flex items-center gap-2">
-              <span className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-600">
-                {currentUser.display_name}
-              </span>
-              <button
-                type="submit"
-                className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                退出
-              </button>
-            </form>
-          ) : (
-            <Link
-              href="/login"
-              className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              登录
-            </Link>
-          )}
-          <Link
-            href="/ocr"
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <ScanText className="h-4 w-4" aria-hidden="true" />
-            图片取字
-          </Link>
-          <Link
-            href="/settings"
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <Settings className="h-4 w-4" aria-hidden="true" />
-            模型配置
-          </Link>
+    <main className="flex flex-col gap-6">
+      {backendUnavailable ? (
+        <div
+          role="alert"
+          className="flex flex-col gap-2 rounded-[10px] border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)] sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span>
+            后端服务暂时不可用（请求已超时中止，默认 4 秒），页面数据可能不完整。请确认 8020 后端已启动后刷新重试。
+          </span>
+          <a href="/" className="shrink-0 font-medium underline underline-offset-4">
+            重新加载
+          </a>
         </div>
+      ) : null}
+      {/* 页头：标题 + 渐变统计卡 */}
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-[var(--primary)]">Ecommerce Operation Assistant</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--foreground)] sm:text-3xl">
+            多平台店铺运营工作台
+          </h1>
+          <p className="mt-2 text-sm text-[var(--muted-foreground)]">聚合店铺、商品与 AI 运营任务，一站掌握经营链路</p>
+        </div>
+        <div className="grid w-full grid-cols-2 gap-3 sm:w-[560px] sm:grid-cols-4">
+          <StatCard label="店铺" value={stores.length} icon={StoreStatIcon} gradient="bg-gradient-primary" />
+          <StatCard label="活跃店铺" value={activeStores} icon={Layers} gradient="bg-gradient-info" />
+          <StatCard label="商品" value={products.length} icon={ProductStatIcon} gradient="bg-gradient-success" />
+          <StatCard label="平台" value={platformCount} icon={Globe} gradient="bg-gradient-warning" />
+        </div>
+      </header>
 
-        <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-medium text-cyan-700">Ecommerce Operation Assistant</p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 sm:text-3xl">
-              多平台店铺运营工作台
-            </h1>
-          </div>
-          <div className="grid grid-cols-2 gap-3 sm:w-[560px] sm:grid-cols-4">
-            <MetricCard label="店铺" value={stores.length} />
-            <MetricCard label="活跃店铺" value={activeStores} />
-            <MetricCard label="商品" value={products.length} />
-            <MetricCard label="平台" value={platformCount} />
-          </div>
-        </header>
+      {/* 仪表盘图表 */}
+      <DashboardCharts
+        trend={trendData}
+        ring={ringData}
+        trendTitle="资产增长趋势"
+        trendSubtitle="近 7 日新增店铺与商品数"
+        ringTitle="平台分布"
+        ringSubtitle="店铺与商品平台占比"
+        badgeText="近 7 天"
+      />
 
-        <section className="flex flex-col gap-3 rounded-md border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
+      <section className="card p-4 lg:p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-slate-950">演示和导入</h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <h2 className="text-sm font-semibold text-[var(--foreground)]">演示和导入</h2>
+            <p className="mt-1 text-sm text-[var(--muted-foreground)]">
               用演示数据快速跑通店铺、库存、投放实验和复盘链路，或下载绩效数据导入模板。
             </p>
             {query.demo === "created" ? (
-              <p className="mt-2 text-xs font-medium text-emerald-700">演示数据已准备好。</p>
+              <p className="mt-2 text-xs font-medium text-[var(--success)]">演示数据已准备好。</p>
             ) : null}
             {query.demo === "failed" ? (
-              <p className="mt-2 text-xs font-medium text-rose-700">演示数据创建失败，请确认当前账号有编辑权限。</p>
+              <p className="mt-2 text-xs font-medium text-[var(--danger)]">演示数据创建失败，请确认当前账号有编辑权限。</p>
             ) : null}
             {!canEdit ? (
-              <p className="mt-2 text-xs font-medium text-amber-700">当前账号为只读权限，只能查看数据，不能创建或导入。</p>
+              <p className="mt-2 text-xs font-medium text-[var(--warning)]">当前账号为只读权限，只能查看数据，不能创建或导入。</p>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             {canEdit ? (
               <form action="/workspace/demo-data" method="post">
-                <button
-                  type="submit"
-                  className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white hover:bg-slate-800"
-                >
+                <button type="submit" className="btn-ghost h-9 px-3 text-sm">
                   <Database className="h-4 w-4" aria-hidden="true" />
                   生成演示数据
                 </button>
               </form>
             ) : null}
-            <Link
-              href="/workspace/templates/performance-records"
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            <Link href="/workspace/templates/performance-records" className="btn-ghost h-9 px-3 text-sm">
               <Download className="h-4 w-4" aria-hidden="true" />
               下载导入模板
             </Link>
             {canEdit ? (
-              <Link
-                href="/imports"
-                className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
+              <Link href="/imports" className="btn-primary h-9 px-3 text-sm">
                 <Package className="h-4 w-4" aria-hidden="true" />
                 导入中心
               </Link>
             ) : null}
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section className={`grid gap-6 ${canEdit ? "xl:grid-cols-[360px_1fr]" : ""}`}>
-          {canEdit ? (
-            <div className="flex flex-col gap-6">
-              <div className="rounded-md border border-slate-200 bg-white p-5">
-                <StoreCreateForm />
+      <section className={`grid gap-6 ${canEdit ? "xl:grid-cols-[360px_1fr]" : ""}`}>
+        {canEdit ? (
+          <div className="flex flex-col gap-6">
+            <div className="card p-5">
+              <StoreCreateForm />
+            </div>
+            <div className="card p-5">
+              <ProductCreateForm stores={stores} />
+            </div>
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-6">
+          <section className="card p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-[var(--foreground)]">店铺视图</h2>
+                <p className="mt-1 text-sm text-[var(--muted-foreground)]">按平台和店铺归拢商品，先把多平台运营入口铺出来</p>
               </div>
-              <div className="rounded-md border border-slate-200 bg-white p-5">
-                <ProductCreateForm stores={stores} />
+              <div className="flex flex-wrap gap-2">
+                {platformFilters.map((platform) => (
+                  <Link
+                    key={platform.value}
+                    href={platform.value === "all" ? "/" : `/?platform=${platform.value}`}
+                    className={`inline-flex h-9 items-center rounded-[10px] border px-3 text-sm font-medium transition ${
+                      selectedPlatform === platform.value
+                        ? "border-transparent bg-gradient-primary text-white shadow-[var(--shadow-btn)]"
+                        : "border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                    }`}
+                  >
+                    {platform.label}
+                  </Link>
+                ))}
               </div>
             </div>
-          ) : null}
 
-          <div className="flex flex-col gap-6">
-            <section className="rounded-md border border-slate-200 bg-white p-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">店铺视图</h2>
-                  <p className="mt-1 text-sm text-slate-500">按平台和店铺归拢商品，先把多平台运营入口铺出来</p>
+            <div className="mt-5 grid gap-3 lg:grid-cols-2">
+              {stores.length === 0 ? (
+                <div className="rounded-[10px] border border-dashed border-[var(--border-strong)] px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">
+                  还没有店铺，先在左侧创建一个平台店铺。
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {platformFilters.map((platform) => (
-                    <Link
-                      key={platform.value}
-                      href={platform.value === "all" ? "/" : `/?platform=${platform.value}`}
-                      className={`inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium ${
-                        selectedPlatform === platform.value
-                          ? "border-cyan-700 bg-cyan-700 text-white"
-                          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                      }`}
-                    >
-                      {platform.label}
-                    </Link>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-3 lg:grid-cols-2">
-                {stores.length === 0 ? (
-                  <div className="rounded-md border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
-                    还没有店铺，先在左侧创建一个平台店铺。
-                  </div>
-                ) : (
-                  stores.map((store) => (
-                    <StoreSummaryCard
-                      key={store.id}
-                      store={store}
-                      productCount={productsByStore.get(store.id) ?? 0}
-                      selected={store.id === selectedStoreId}
-                    />
-                  ))
-                )}
-                {unboundProducts > 0 ? (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-4">
-                    <div className="flex items-center gap-3">
-                      <Package className="h-5 w-5 text-amber-700" aria-hidden="true" />
-                      <div>
-                        <p className="text-sm font-semibold text-slate-950">未绑定店铺商品</p>
-                        <p className="mt-1 text-xs text-amber-800">{unboundProducts} 个商品需要补店铺归属</p>
-                      </div>
+              ) : (
+                stores.map((store) => (
+                  <StoreSummaryCard
+                    key={store.id}
+                    store={store}
+                    productCount={productsByStore.get(store.id) ?? 0}
+                    selected={store.id === selectedStoreId}
+                  />
+                ))
+              )}
+              {unboundProducts > 0 ? (
+                <div className="rounded-[10px] border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <Package className="h-5 w-5 text-[var(--warning)]" aria-hidden="true" />
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--foreground)]">未绑定店铺商品</p>
+                      <p className="mt-1 text-xs text-[var(--warning)]">{unboundProducts} 个商品需要补店铺归属</p>
                     </div>
                   </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-md border border-slate-200 bg-white p-5">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold">商品池</h2>
-                  <p className="mt-1 text-sm text-slate-500">围绕每个商品补竞品、出素材、做投放实验和复盘</p>
                 </div>
-                <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-slate-100 px-3 text-xs font-medium text-slate-600">
-                  <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
-                  {filteredProducts.length} / {products.length}
+              ) : null}
+            </div>
+          </section>
+
+          <section className="card p-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-semibold text-[var(--foreground)]">商品池</h2>
+                <p className="mt-1 text-sm text-[var(--muted-foreground)]">围绕每个商品补竞品、出素材、做投放实验和复盘</p>
+              </div>
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[var(--primary-soft)] px-3 text-xs font-semibold text-[var(--primary)]">
+                <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
+                {filteredProducts.length} / {products.length}
+              </span>
+            </div>
+
+            <div className="mt-5 overflow-hidden rounded-[10px] border border-[var(--border)]">
+              <div className="hidden grid-cols-[1.3fr_0.9fr_0.8fr_0.7fr_1fr_96px] bg-[var(--card-muted)] px-4 py-3 text-xs font-semibold text-[var(--muted-foreground)] lg:grid">
+                <span>商品</span>
+                <span>店铺</span>
+                <span>平台</span>
+                <span>售价</span>
+                <span>卖点</span>
+                <span>动作</span>
+              </div>
+
+              {filteredProducts.length === 0 ? (
+                <div className="px-4 py-12 text-center text-sm text-[var(--muted-foreground)]">
+                  当前筛选下没有商品，可以新建商品或切换平台。
+                </div>
+              ) : (
+                <div className="divide-y divide-[var(--border)]">
+                  {filteredProducts.map((product) => (
+                    <ProductRow key={product.id} product={product} store={product.store_id ? storeById.get(product.store_id) : null} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-5">
+        {workflow.map((item) => {
+          const Icon = item.icon;
+          const workflowItem = workflowItems.get(item.title);
+          return (
+            <Link
+              key={item.title}
+              href={workflowItem?.href ?? item.href}
+              className="card card-hover group p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-[10px] text-white shadow-[var(--shadow-btn)] ${item.tone}`}>
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <span className="rounded-full bg-[var(--card-muted)] px-2 py-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                  {workflowItem?.count ?? 0}
                 </span>
               </div>
-
-              <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
-                <div className="hidden grid-cols-[1.3fr_0.9fr_0.8fr_0.7fr_1fr_96px] bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500 lg:grid">
-                  <span>商品</span>
-                  <span>店铺</span>
-                  <span>平台</span>
-                  <span>售价</span>
-                  <span>卖点</span>
-                  <span>动作</span>
-                </div>
-
-                {filteredProducts.length === 0 ? (
-                  <div className="px-4 py-12 text-center text-sm text-slate-500">
-                    当前筛选下没有商品，可以新建商品或切换平台。
-                  </div>
-                ) : (
-                  <div className="divide-y divide-slate-200">
-                    {filteredProducts.map((product) => (
-                      <ProductRow key={product.id} product={product} store={product.store_id ? storeById.get(product.store_id) : null} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section className="grid gap-4 md:grid-cols-5">
-          {workflow.map((item) => {
-            const Icon = item.icon;
-            const workflowItem = workflowItems.get(item.title);
-            return (
-              <Link
-                key={item.title}
-                href={workflowItem?.href ?? item.href}
-                className="rounded-md border border-slate-200 bg-white p-4 transition hover:border-cyan-200 hover:bg-cyan-50"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className={`flex h-9 w-9 items-center justify-center rounded-md ${item.tone}`}>
-                    <Icon className="h-4 w-4" aria-hidden="true" />
-                  </div>
-                  <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
-                    {workflowItem?.count ?? 0}
-                  </span>
-                </div>
-                <h3 className="mt-4 text-sm font-semibold text-slate-950">{item.title}</h3>
-                <p className="mt-1 text-xs leading-5 text-slate-500">{workflowItem?.hint ?? "查看下一步"}</p>
-              </Link>
-            );
-          })}
-        </section>
-      </div>
+              <h3 className="mt-4 text-sm font-semibold text-[var(--foreground)]">{item.title}</h3>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{workflowItem?.hint ?? "查看下一步"}</p>
+            </Link>
+          );
+        })}
+      </section>
     </main>
   );
+}
+
+/** 构建近7日资产增长趋势，聚合店铺与商品的创建时间。 */
+function buildGrowthTrend(products: Product[], stores: Store[]): Array<{ date: string; count: number }> {
+  const days: Array<{ date: string; count: number }> = [];
+  const now = new Date();
+  for (let i = 6; i >= 0; i -= 1) {
+    const day = new Date(now);
+    day.setDate(now.getDate() - i);
+    const key = `${day.getMonth() + 1}/${day.getDate()}`;
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+    const end = start + 86400000;
+    let count = 0;
+    for (const product of products) {
+      const time = new Date(product.created_at).getTime();
+      if (time >= start && time < end) count += 1;
+    }
+    for (const store of stores) {
+      const time = new Date(store.created_at).getTime();
+      if (time >= start && time < end) count += 1;
+    }
+    days.push({ date: key, count });
+  }
+  return days;
+}
+
+/** 构建平台分布，聚合店铺与商品按平台统计。 */
+function buildPlatformDistribution(products: Product[], stores: Store[]): Array<{ name: string; value: number }> {
+  const counts = new Map<string, number>();
+  for (const store of stores) {
+    const label = platformLabels[store.platform];
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  for (const product of products) {
+    const label = platformLabels[product.platform];
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
 }
 
 /** 构建首页工作流，从现有业务数据推导稳定的页面展示模型，不在渲染阶段修改源数据。 */
@@ -377,16 +400,6 @@ function firstProductHref(products: Product[], tab: string): string {
   return products[0] ? `/products/${products[0].id}?tab=${tab}` : "/";
 }
 
-/** 渲染 MetricCard 组件，集中展示指标卡片所需的数据、状态和操作入口。 */
-function MetricCard({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className="mt-1 text-xl font-semibold">{value}</p>
-    </div>
-  );
-}
-
 /** 渲染 StoreSummaryCard 组件，集中展示店铺汇总卡片所需的数据、状态和操作入口。 */
 function StoreSummaryCard({
   store,
@@ -399,44 +412,48 @@ function StoreSummaryCard({
 }) {
   return (
     <div
-      className={`rounded-md border px-4 py-4 transition ${
-        selected ? "border-cyan-700 bg-cyan-50" : "border-slate-200 bg-white hover:bg-slate-50"
+      className={`card card-hover p-4 ${
+        selected ? "border-[var(--primary)] bg-[var(--primary-soft)]" : ""
       }`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-700">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-gradient-primary text-white shadow-[var(--shadow-btn)]">
             <StoreIcon className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-slate-950">{store.name}</p>
-            <p className="mt-1 text-xs text-slate-500">{platformLabels[store.platform]}</p>
+            <p className="truncate text-sm font-semibold text-[var(--foreground)]">{store.name}</p>
+            <p className="mt-1 text-xs text-[var(--muted-foreground)]">{platformLabels[store.platform]}</p>
           </div>
         </div>
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+        <span
+          className={`badge-gradient ${
+            store.status === "active" ? "badge-success" : store.status === "paused" ? "badge-warning" : "badge-muted"
+          }`}
+        >
           {store.status === "active" ? "启用" : store.status === "paused" ? "暂停" : "关闭"}
         </span>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <div>
-          <p className="text-xs text-slate-500">商品数</p>
-          <p className="mt-1 font-semibold text-slate-950">{productCount}</p>
+          <p className="text-xs text-[var(--muted-foreground)]">商品数</p>
+          <p className="mt-1 font-semibold text-[var(--foreground)]">{productCount}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">负责人</p>
-          <p className="mt-1 truncate font-semibold text-slate-950">{store.owner_name ?? "-"}</p>
+          <p className="text-xs text-[var(--muted-foreground)]">负责人</p>
+          <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{store.owner_name ?? "-"}</p>
         </div>
       </div>
       <div className="mt-4 flex gap-2">
         <Link
           href={`/?store=${store.id}`}
-          className="inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          className="btn-ghost h-8 px-3 text-xs"
         >
           筛选商品
         </Link>
         <Link
           href={`/stores/${store.id}`}
-          className="inline-flex h-8 items-center rounded-md bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800"
+          className="btn-primary h-8 px-3 text-xs"
         >
           店铺详情
         </Link>
@@ -450,22 +467,22 @@ function ProductRow({ product, store }: { product: Product; store: Store | null 
   return (
     <div className="grid gap-3 px-4 py-4 text-sm lg:min-h-16 lg:grid-cols-[1.3fr_0.9fr_0.8fr_0.7fr_1fr_96px] lg:items-center lg:gap-0 lg:py-3">
       <div>
-        <p className="font-medium text-slate-950">{product.name}</p>
-        <p className="mt-1 text-xs text-slate-500">{product.category ?? "未分类"}</p>
+        <p className="font-medium text-[var(--foreground)]">{product.name}</p>
+        <p className="mt-1 text-xs text-[var(--muted-foreground)]">{product.category ?? "未分类"}</p>
       </div>
-      <span className="text-slate-600">{store?.name ?? "未绑定"}</span>
-      <span className="text-slate-600">{platformLabels[product.platform]}</span>
-      <span className="font-medium text-slate-800">{product.price ? `¥${product.price}` : "-"}</span>
+      <span className="text-[var(--muted-foreground)]">{store?.name ?? "未绑定"}</span>
+      <span className="text-[var(--muted-foreground)]">{platformLabels[product.platform]}</span>
+      <span className="font-medium text-[var(--foreground)]">{product.price ? `¥${product.price}` : "-"}</span>
       <div className="flex flex-wrap gap-1.5">
         {product.selling_points.slice(0, 3).map((point) => (
-          <span key={point} className="rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+          <span key={point} className="rounded-full bg-[var(--success)]/10 px-2 py-1 text-xs font-medium text-[var(--success)]">
             {point}
           </span>
         ))}
       </div>
       <Link
         href={`/products/${product.id}`}
-        className="inline-flex h-9 w-24 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        className="btn-ghost inline-flex h-9 w-24 items-center justify-center gap-1.5 px-3 text-xs"
       >
         进入
         <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />

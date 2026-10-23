@@ -1,4 +1,4 @@
-import { ArrowLeft, Download, FileSpreadsheet, Upload } from "lucide-react";
+import { Download, FileSpreadsheet, Upload } from "lucide-react";
 import Link from "next/link";
 
 import { PerformanceImportCenterPanel, ProductImportPanel, SkuInventoryImportPanel } from "@/components/product-import-panel";
@@ -29,25 +29,15 @@ const templates = [
 /** 渲染导入页面；在服务端加载业务数据，并把交互交给对应表单或客户端组件。 */
 export default function ImportCenterPage() {
   return (
-    <main className="min-h-screen bg-[#f7f8fb] px-5 py-6 text-slate-950 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <div>
-          <Link
-            href="/"
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            返回工作台
-          </Link>
-        </div>
-
-        <header className="rounded-md border border-slate-200 bg-white p-5">
+    <main className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
+        <header className="card p-5">
           <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-slate-950 text-white">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-gradient-primary text-white shadow-[var(--shadow-btn)]">
               <Upload className="h-6 w-6" aria-hidden="true" />
             </div>
             <div>
-              <p className="text-sm font-medium text-cyan-700">Data Import</p>
+              <p className="text-sm font-medium text-[var(--primary)]">Data Import</p>
               <h1 className="mt-1 text-2xl font-semibold tracking-normal text-slate-950">导入中心</h1>
               <p className="mt-2 text-sm text-slate-500">
                 汇总商品、SKU 库存、经营数据和平台字段映射模板，后续承接导入预览和错误行提示。
@@ -58,10 +48,10 @@ export default function ImportCenterPage() {
 
         <section className="grid gap-4 lg:grid-cols-2">
           {templates.map((template) => (
-            <div key={template.href} className="rounded-md border border-slate-200 bg-white p-5">
+            <div key={template.href} className="card p-5">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-cyan-50 text-cyan-700">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-[var(--primary-soft)] text-[var(--primary)]">
                     <FileSpreadsheet className="h-5 w-5" aria-hidden="true" />
                   </div>
                   <div>
@@ -85,7 +75,7 @@ export default function ImportCenterPage() {
         <SkuInventoryImportPanel />
         <PerformanceImportCenterPanel />
 
-        <section className="rounded-md border border-slate-200 bg-white p-5">
+        <section className="card p-5">
           <h2 className="text-lg font-semibold text-slate-950">已接入能力</h2>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <StatusCard title="经营数据 CSV" status="已支持预览" />

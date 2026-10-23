@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { MarkdownView } from "@/components/markdown-view";
+import { Skeleton, StatusBadge } from "@/components/ui";
 import type { AgentDraftOutput, AgentRun, AgentRunStatus } from "@/types";
 
 type AgentRunPanelProps = {
@@ -48,20 +50,76 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
     if (!latestRunId || !latestRunStatus || !["queued", "running", "resume_queued"].includes(latestRunStatus)) {
       return;
     }
-    const timer = window.setInterval(async () => {
-      try {
-        const response = await fetch(`/agent-runs/${latestRunId}`, { cache: "no-store" });
-        if (!response.ok) return;
-        const updated = (await response.json()) as AgentRun;
-        setRuns((current) => [updated, ...current.filter((item) => item.id !== updated.id)]);
-        if (updated.status === "awaiting_review") {
-          setDraftJson(formatDraft(updated));
-        }
-      } catch {
-        // 短时轮询失败不打断用户操作，下一轮继续读取 Celery 运行状态。
+    let disposed = false;
+    let timer: number | null = null;
+    const controller = new AbortController();
+
+    /** 应用后端返回的最新运行快照，供流式与降级轮询共用。 */
+    function applyRun(updated: AgentRun) {
+      setRuns((current) => [updated, ...current.filter((item) => item.id !== updated.id)]);
+      if (updated.status === "awaiting_review") {
+        setDraftJson(formatDraft(updated));
       }
-    }, 2000);
-    return () => window.clearInterval(timer);
+    }
+
+    /** 以 2s 轮询兜底，保证 SSE 不可用时功能不退化。 */
+    function startPolling() {
+      if (disposed || timer !== null) return;
+      timer = window.setInterval(async () => {
+        try {
+          const response = await fetch(`/agent-runs/${latestRunId}`, { cache: "no-store" });
+          if (!response.ok) return;
+          applyRun((await response.json()) as AgentRun);
+        } catch {
+          // 短时轮询失败不打断用户操作，下一轮继续读取 Celery 运行状态。
+        }
+      }, 2000);
+    }
+
+    async function consumeStream() {
+      try {
+        const response = await fetch(`/agent-runs/${latestRunId}/stream`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error(`SSE ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finished = false;
+        while (!disposed) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+          for (const frame of frames) {
+            const parsed = parseSseFrame(frame);
+            if (!parsed) continue;
+            if (parsed.event === "snapshot" || parsed.event === "run" || parsed.event === "done") {
+              applyRun(parsed.run);
+            }
+            if (parsed.event === "done") {
+              finished = true;
+              break;
+            }
+          }
+          if (finished) break;
+        }
+        if (!disposed && !finished) throw new Error("SSE 连接提前结束");
+      } catch {
+        // 流式失败或浏览器不支持时降级到 2s 轮询，保证运行状态仍可更新。
+        startPolling();
+      }
+    }
+
+    void consumeStream();
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      if (timer !== null) window.clearInterval(timer);
+    };
   }, [latestRunId, latestRunStatus]);
 
   const hasActiveRun = latestRun ? activeStatuses.includes(latestRun.status) : false;
@@ -120,10 +178,10 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
   return (
     <section className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.55fr)]">
       <div className="grid gap-6">
-        <div className="rounded-md border border-slate-200 bg-white p-6">
+        <div className="card p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <div className="flex items-center gap-2 text-emerald-700">
+              <div className="flex items-center gap-2 text-[var(--primary)]">
                 <Bot className="h-5 w-5" aria-hidden="true" />
                 <span className="text-sm font-semibold">商品运营 Agent</span>
               </div>
@@ -136,14 +194,14 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
               type="button"
               onClick={startRun}
               disabled={!canEdit || submitting || hasActiveRun}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-gradient-primary px-4 py-2.5 text-sm font-semibold text-white shadow-[var(--shadow-btn)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               {hasActiveRun ? "运行进行中" : "启动运营 Agent"}
             </button>
           </div>
           {error ? (
-            <div className="mt-4 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">
               <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
               {error}
             </div>
@@ -152,7 +210,7 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
 
         {latestRun ? (
           <>
-            <div className="rounded-md border border-slate-200 bg-white p-6">
+            <div className="card p-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
@@ -167,9 +225,9 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
                   const state = specialistState(latestRun, step.key);
                   const Icon = step.icon;
                   return (
-                    <div key={step.key} className="rounded-md border border-slate-200 p-4">
+                    <div key={step.key} className={`card p-4 transition ${state === "running" ? "animate-pulse" : ""}`}>
                       <div className="flex items-center justify-between">
-                        <Icon className="h-5 w-5 text-slate-600" aria-hidden="true" />
+                        <Icon className="h-5 w-5 text-[var(--primary)]" aria-hidden="true" />
                         <StepStateIcon state={state} />
                       </div>
                       <p className="mt-3 text-sm font-semibold text-slate-900">{step.label}</p>
@@ -187,15 +245,15 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
 
             <QualityPanel run={latestRun} />
             {latestRun.status === "awaiting_review" ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-6">
-                <div className="flex items-center gap-2 text-amber-800">
+              <div className="card border-[var(--warning)]/40 p-6">
+                <div className="flex items-center gap-2 text-[var(--warning)]">
                   <UserCheck className="h-5 w-5" />
                   <h3 className="text-lg font-semibold">等待人工审核</h3>
                 </div>
-                <p className="mt-2 text-sm leading-6 text-amber-800/80">
+                <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
                   可直接通过、编辑完整结构化草稿后通过，或驳回。本步骤不会自动执行投放或资金操作。
                 </p>
-                <label className="mt-5 block text-sm font-medium text-slate-700" htmlFor="agent-draft-json">
+                <label className="mt-5 block text-sm font-medium text-[var(--foreground)]" htmlFor="agent-draft-json">
                   结构化草稿（可编辑）
                 </label>
                 <textarea
@@ -204,16 +262,16 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
                   onChange={(event) => setDraftJson(event.target.value)}
                   rows={20}
                   spellCheck={false}
-                  className="mt-2 w-full rounded-md border border-amber-200 bg-white p-3 font-mono text-xs leading-5 text-slate-800 outline-none focus:border-amber-500"
+                  className="mt-2 w-full rounded-[10px] border border-[var(--border-strong)] bg-[var(--input-bg)] p-3 font-mono text-xs leading-5 text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
                 />
-                <label className="mt-4 block text-sm font-medium text-slate-700" htmlFor="agent-review-note">
+                <label className="mt-4 block text-sm font-medium text-[var(--foreground)]" htmlFor="agent-review-note">
                   审核备注
                 </label>
                 <input
                   id="agent-review-note"
                   value={reviewNote}
                   onChange={(event) => setReviewNote(event.target.value)}
-                  className="mt-2 w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
+                  className="mt-2 w-full rounded-[10px] border border-[var(--border-strong)] bg-[var(--input-bg)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]"
                   placeholder="可选：记录修改原因或驳回原因"
                 />
                 <div className="mt-4 flex flex-wrap gap-3">
@@ -227,7 +285,7 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
                     type="button"
                     disabled={submitting || !canEdit}
                     onClick={() => submitReview("reject")}
-                    className="rounded-md border border-rose-300 bg-white px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                    className="rounded-[10px] border border-[var(--danger)]/30 bg-[var(--card)] px-4 py-2 text-sm font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)] disabled:opacity-50"
                   >
                     驳回
                   </button>
@@ -236,55 +294,59 @@ export function AgentRunPanel({ productId, initialRuns, canEdit }: AgentRunPanel
             ) : null}
           </>
         ) : (
-          <div className="rounded-md border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
-            <Bot className="mx-auto h-9 w-9 text-slate-300" />
-            <p className="mt-4 font-medium text-slate-700">还没有 Agent 运行记录</p>
-            <p className="mt-1 text-sm text-slate-500">启动后将显示专家协作、质量检查和人工审批过程。</p>
+          <div className="grid gap-4">
+            <Skeleton className="h-7 w-2/3" />
+            <div className="grid gap-3 md:grid-cols-4">
+              {[0, 1, 2, 3].map((index) => (
+                <Skeleton key={index} className="h-24" />
+              ))}
+            </div>
+            <Skeleton className="h-32" />
           </div>
         )}
       </div>
 
       <aside className="grid content-start gap-6">
-        <div className="rounded-md border border-slate-200 bg-white p-5">
+        <div className="card p-5">
           <div className="flex items-center gap-2">
-            <Clock3 className="h-4 w-4 text-slate-500" />
+            <Clock3 className="h-4 w-4 text-[var(--muted-foreground)]" />
             <h3 className="font-semibold">运行轨迹</h3>
           </div>
           <div className="mt-4 grid gap-3">
             {latestEvents.length ? (
               latestEvents.map((event) => (
-                <div key={event.id} className="border-l-2 border-slate-200 pl-3">
+                <div key={event.id} className="border-l-2 border-[var(--border-strong)] pl-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-slate-800">{eventLabel(event.event_type)}</p>
-                    <span className="text-[11px] text-slate-400">{formatTime(event.created_at)}</span>
+                    <p className="text-sm font-medium text-[var(--foreground)]">{eventLabel(event.event_type)}</p>
+                    <span className="text-[11px] text-[var(--muted-foreground)]">{formatTime(event.created_at)}</span>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    {event.message ?? agentLabel(event.agent_name)}
-                  </p>
+                  <div className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">
+                    <MarkdownView content={event.message ?? agentLabel(event.agent_name)} small />
+                  </div>
                   {event.metrics.latency_ms ? (
-                    <p className="mt-1 text-[11px] text-slate-400">耗时 {String(event.metrics.latency_ms)} ms</p>
+                    <p className="mt-1 text-[11px] text-[var(--muted-foreground)]">耗时 {String(event.metrics.latency_ms)} ms</p>
                   ) : null}
                 </div>
               ))
             ) : (
-              <p className="py-8 text-center text-sm text-slate-400">暂无运行事件</p>
+              <p className="py-8 text-center text-sm text-[var(--muted-foreground)]">暂无运行事件</p>
             )}
           </div>
         </div>
 
-        <div className="rounded-md border border-slate-200 bg-white p-5">
+        <div className="card p-5">
           <h3 className="font-semibold">最近运行</h3>
           <div className="mt-4 grid gap-2">
             {runs.slice(0, 5).map((run) => (
-              <div key={run.id} className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2.5">
+              <div key={run.id} className="flex items-center justify-between rounded-[8px] bg-[var(--muted)] px-3 py-2.5">
                 <div>
                   <p className="text-sm font-medium">Run #{run.id}</p>
-                  <p className="mt-0.5 text-xs text-slate-400">{formatTime(run.created_at)}</p>
+                  <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">{formatTime(run.created_at)}</p>
                 </div>
                 <RunStatusBadge status={run.status} compact />
               </div>
             ))}
-            {!runs.length ? <p className="py-6 text-center text-sm text-slate-400">暂无记录</p> : null}
+            {!runs.length ? <p className="py-6 text-center text-sm text-[var(--muted-foreground)]">暂无记录</p> : null}
           </div>
         </div>
       </aside>
@@ -297,30 +359,30 @@ function QualityPanel({ run }: { run: AgentRun }) {
   const report = run.quality_report;
   if (typeof report.score !== "number") return null;
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-6">
+    <div className="card p-6">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-emerald-700" />
+          <ShieldCheck className="h-5 w-5 text-[var(--primary)]" />
           <h3 className="text-lg font-semibold">质量审核</h3>
         </div>
-        <span className={`text-lg font-semibold ${report.passed ? "text-emerald-700" : "text-amber-700"}`}>
+        <span className={`text-lg font-semibold ${report.passed ? "text-[var(--success)]" : "text-[var(--warning)]"}`}>
           {report.score} 分
         </span>
       </div>
       <div className="mt-4 grid gap-2">
         {(report.issues ?? []).length ? (
           report.issues?.map((issue) => (
-            <div key={`${issue.code}-${issue.field}`} className="flex items-start gap-2 rounded-md bg-slate-50 px-3 py-2 text-sm">
+            <div key={`${issue.code}-${issue.field}`} className="flex items-start gap-2 rounded-[8px] bg-[var(--muted)] px-3 py-2 text-sm">
               {issue.severity === "error" ? (
                 <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
               ) : (
                 <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
               )}
-              <span className="text-slate-600">{issue.message}</span>
+              <span className="text-[var(--foreground)]">{issue.message}</span>
             </div>
           ))
         ) : (
-          <p className="flex items-center gap-2 text-sm text-emerald-700">
+          <p className="flex items-center gap-2 text-sm text-[var(--success)]">
             <CheckCircle2 className="h-4 w-4" /> 结构、差异性与合规规则检查通过
           </p>
         )}
@@ -341,23 +403,26 @@ function RunStatusBadge({ status, compact = false }: { status: AgentRunStatus; c
     failed: "失败",
     cancelled: "已取消",
   };
-  const color =
-    status === "completed"
-      ? "bg-emerald-50 text-emerald-700"
-      : status === "failed" || status === "rejected"
-        ? "bg-rose-50 text-rose-700"
-        : status === "awaiting_review"
-          ? "bg-amber-50 text-amber-700"
-          : "bg-sky-50 text-sky-700";
-  return <span className={`rounded-md px-2.5 py-1 ${compact ? "text-[11px]" : "text-xs"} font-semibold ${color}`}>{labels[status]}</span>;
+  const tones: Record<AgentRunStatus, "success" | "warning" | "danger" | "info" | "muted" | "running"> = {
+    queued: "muted",
+    running: "running",
+    awaiting_review: "warning",
+    resume_queued: "running",
+    completed: "success",
+    rejected: "danger",
+    failed: "danger",
+    cancelled: "muted",
+  };
+  const badge = <StatusBadge label={labels[status]} tone={tones[status]} />;
+  return compact ? <span className="text-[11px] leading-none">{badge}</span> : badge;
 }
 
 /** 渲染 StepStateIcon 组件，集中展示stepstateicon所需的数据、状态和操作入口。 */
 function StepStateIcon({ state }: { state: "pending" | "running" | "completed" | "failed" }) {
-  if (state === "completed") return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
-  if (state === "failed") return <XCircle className="h-4 w-4 text-rose-600" />;
-  if (state === "running") return <RefreshCw className="h-4 w-4 animate-spin text-sky-600" />;
-  return <Clock3 className="h-4 w-4 text-slate-300" />;
+  if (state === "completed") return <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />;
+  if (state === "failed") return <XCircle className="h-4 w-4 text-[var(--danger)]" />;
+  if (state === "running") return <RefreshCw className="h-4 w-4 animate-spin text-[var(--primary)]" />;
+  return <Clock3 className="h-4 w-4 text-[var(--muted)]" />;
 }
 
 /** specialiststate，封装当前页面重复使用的转换或展示规则，并统一处理空值边界。 */
@@ -379,6 +444,28 @@ function formatDraft(run: AgentRun | null) {
   return JSON.stringify(run.draft_output, null, 2);
 }
 
+/** 解析单个 SSE 帧；忽略注释行与无法解析的数据，保证流式读取健壮。 */
+function parseSseFrame(raw: string): { event: string; run: AgentRun } | null {
+  let eventName = "message";
+  const dataLines: string[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+  if (!dataLines.length) return null;
+  try {
+    const payload = JSON.parse(dataLines.join("\n")) as { run?: AgentRun };
+    if (!payload.run) return null;
+    return { event: eventName, run: payload.run };
+  } catch {
+    return null;
+  }
+}
+
 /** 读取响应，封装当前页面重复使用的转换或展示规则，并统一处理空值边界。 */
 async function readResponse(response: Response): Promise<AgentRun> {
   const payload = (await response.json()) as AgentRun & { detail?: string };
@@ -389,7 +476,7 @@ async function readResponse(response: Response): Promise<AgentRun> {
 /** 渲染 ReviewButton 组件，集中展示复盘按钮所需的数据、状态和操作入口。 */
 function ReviewButton({ children, disabled, onClick }: { children: React.ReactNode; disabled: boolean; onClick: () => void }) {
   return (
-    <button type="button" disabled={disabled} onClick={onClick} className="rounded-md bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50">
+    <button type="button" disabled={disabled} onClick={onClick} className="rounded-[10px] bg-gradient-warning px-4 py-2 text-sm font-semibold text-white shadow-[var(--shadow-btn)] transition hover:opacity-90 disabled:opacity-50">
       {children}
     </button>
   );

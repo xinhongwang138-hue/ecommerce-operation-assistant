@@ -1,6 +1,5 @@
 import {
   AlertCircle,
-  ArrowLeft,
   Bot,
   CheckCircle2,
   FlaskConical,
@@ -9,12 +8,15 @@ import {
   Users,
   Video,
 } from "lucide-react";
-import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { getCurrentUser, getModelSettings, getUsers } from "@/lib/api";
+import { getCurrentUser, getModelSettings, getModelSettingsError, getUsers } from "@/lib/api";
+import Link from "next/link";
 import { getAuthToken } from "@/lib/session";
 import type { UserAccount } from "@/types";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type SettingsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -36,12 +38,26 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   const userStatus = scalar(params.user);
 
   if (!settings) {
+    // 读取失败时诊断一次失败原因：401/403 属于未登录或登录过期，其余按网络/后端不可达处理。
+    const settingsError = await getModelSettingsError();
+    const isUnauthorized = settingsError === "unauthorized";
     return (
-      <main className="min-h-screen bg-[#f7f8fb] px-5 py-6 text-slate-950 lg:px-8">
-        <div className="mx-auto max-w-5xl">
-          <BackLink />
-          <div className="mt-6 rounded-md border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
-            模型配置读取失败，请确认后端服务已经启动。
+      <main className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6">
+          <div className="mt-6 flex flex-col gap-4 rounded-[10px] border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-5 text-sm text-[var(--danger)]">
+            {isUnauthorized ? (
+              <>
+                <p>未登录或登录已过期，请先登录。</p>
+                <Link
+                  href="/login"
+                  className="inline-flex h-9 w-fit items-center justify-center rounded-[10px] bg-gradient-primary px-4 text-xs font-semibold text-white shadow-[var(--shadow-btn)] transition hover:opacity-90"
+                >
+                  前往登录
+                </Link>
+              </>
+            ) : (
+              <p>模型配置读取失败，请确认后端服务已经启动。</p>
+            )}
           </div>
         </div>
       </main>
@@ -49,12 +65,11 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f8fb] px-5 py-6 text-slate-950 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
+    <main className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <BackLink />
-            <p className="mt-5 text-sm font-medium text-emerald-700">Model Settings</p>
+            <p className="mt-5 text-sm font-medium text-[var(--primary)]">Model Settings</p>
             <h1 className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 sm:text-3xl">
               模型配置中心
             </h1>
@@ -264,14 +279,14 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
 
         {canEdit ? (
           <div className="flex flex-col gap-3 sm:flex-row">
-            <button
+            <Button
               type="submit"
               form="model-settings-form"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-slate-950 px-5 text-sm font-semibold text-white hover:bg-slate-800"
+              size="lg"
             >
               <KeyRound className="h-4 w-4" aria-hidden="true" />
               保存配置
-            </button>
+            </Button>
             <TestButton target="text" label="测试文本模型" />
             <TestButton target="image" label="测试图片模型" />
             <TestButton target="video" label="测试视频模型" />
@@ -310,20 +325,20 @@ function UserManagementPanel({ users }: { users: UserAccount[] }) {
         <RoleSelect />
         <label className="block">
           <span className="text-sm font-medium text-slate-700">初始密码</span>
-          <input
+          <Input
             name="password"
             type="password"
             minLength={8}
             placeholder="可留空"
-            className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+            className="mt-2 h-11"
           />
         </label>
-        <button
+        <Button
           type="submit"
-          className="inline-flex h-11 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+          size="lg"
         >
           添加用户
-        </button>
+        </Button>
       </form>
 
       <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
@@ -363,15 +378,6 @@ function UserManagementPanel({ users }: { users: UserAccount[] }) {
   );
 }
 
-/** 渲染 BackLink 组件，集中展示返回链接所需的数据、状态和操作入口。 */
-function BackLink() {
-  return (
-    <Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-600">
-      <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-      返回商品池
-    </Link>
-  );
-}
 
 /** 渲染 SectionTitle 组件，集中展示section标题所需的数据、状态和操作入口。 */
 function SectionTitle({
@@ -401,10 +407,10 @@ function SectionTitle({
 /** 渲染 StatusPill 组件，集中展示状态pill所需的数据、状态和操作入口。 */
 function StatusPill({ label, value, active }: { label: string; value: string; active: boolean }) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
+    <div className="card px-4 py-3">
       <p className="text-xs text-slate-500">{label}</p>
       <div className="mt-1 flex items-center gap-2">
-        <span className={`h-2 w-2 rounded-full ${active ? "bg-emerald-500" : "bg-slate-300"}`} />
+        <span className={`h-2 w-2 rounded-full ${active ? "bg-gradient-success" : "bg-[var(--muted)]"}`} />
         <p className="text-sm font-semibold text-slate-900">{value}</p>
       </div>
     </div>
@@ -443,11 +449,11 @@ function TextInput({
   return (
     <label className="block">
       <span className="text-sm font-medium text-slate-700">{label}</span>
-      <input
+      <Input
         name={name}
         defaultValue={defaultValue}
         placeholder={placeholder}
-        className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+        className="mt-2 h-11"
       />
     </label>
   );
@@ -466,12 +472,12 @@ function NumberInput({
   return (
     <label className="block">
       <span className="text-sm font-medium text-slate-700">{label}</span>
-      <input
+      <Input
         name={name}
         type="number"
         min="1"
         defaultValue={defaultValue}
-        className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+        className="mt-2 h-11"
       />
     </label>
   );
@@ -527,11 +533,11 @@ function SecretInput({ label, name, masked }: { label: string; name: string; mas
     <label className="block">
       <span className="text-sm font-medium text-slate-700">{label}</span>
       {/* 密钥输入框不回填明文，只显示脱敏占位；留空时后端保留原 key。 */}
-      <input
+      <Input
         name={name}
         type="password"
         placeholder={masked ? `当前：${masked}，留空则保持不变` : "粘贴 API Key"}
-        className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+        className="mt-2 h-11"
       />
     </label>
   );
@@ -542,13 +548,15 @@ function TestButton({ target, label }: { target: "text" | "image" | "video"; lab
   return (
     <form action="/settings/test" method="post">
       <input type="hidden" name="target" value={target} />
-      <button
+      <Button
         type="submit"
-        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:w-auto"
+        variant="outline"
+        size="lg"
+        className="w-full sm:w-auto"
       >
         <FlaskConical className="h-4 w-4" aria-hidden="true" />
         {label}
-      </button>
+      </Button>
     </form>
   );
 }

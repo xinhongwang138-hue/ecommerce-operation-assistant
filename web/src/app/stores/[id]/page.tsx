@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  ArrowLeft,
   ArrowRight,
   Boxes,
   CheckCircle2,
@@ -14,7 +13,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { InventoryAdvicePanel } from "@/components/inventory-advice-panel";
-import { getCurrentUser, getProducts, getStore, getStoreInventoryMovements, getStoreInventorySummary } from "@/lib/api";
+import {
+  getCurrentUser,
+  getProducts,
+  getStore,
+  getStoreInventoryMovements,
+  getStoreInventorySummary,
+  isBackendAvailable,
+} from "@/lib/api";
 import { getAuthToken } from "@/lib/session";
 import type { StoreInventoryMovementRow, StoreInventoryRow } from "@/types";
 import type { Platform, Product } from "@/types";
@@ -48,6 +54,28 @@ export default async function StorePage({ params, searchParams }: StorePageProps
   ]);
 
   if (!store) {
+    // getStore 在后端不可达时同样返回 null，这里与"店铺不存在"区分，避免把服务故障误报成 404。
+    if (!(await isBackendAvailable())) {
+      return (
+        <main className="flex min-h-[60vh] items-center justify-center p-6">
+          <div className="card max-w-lg border-[var(--danger)]/30 p-6 text-center">
+            <AlertTriangle className="mx-auto h-8 w-8 text-[var(--danger)]" aria-hidden="true" />
+            <h1 className="mt-3 text-lg font-semibold text-[var(--foreground)]">后端服务暂时不可用</h1>
+            <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+              店铺数据请求已超时中止（默认 4 秒），无法确认该店铺信息。请确认 8020 后端已启动后重试。
+            </p>
+            <div className="mt-4 flex justify-center gap-3">
+              <a href={`/stores/${id}`} className="btn-primary h-9 px-4 text-sm">
+                重新加载
+              </a>
+              <Link href="/" className="btn-ghost h-9 px-4 text-sm">
+                返回首页
+              </Link>
+            </div>
+          </div>
+        </main>
+      );
+    }
     notFound();
   }
 
@@ -61,33 +89,23 @@ export default async function StorePage({ params, searchParams }: StorePageProps
   const canEdit = Boolean(currentUser?.permissions.can_edit);
 
   return (
-    <main className="min-h-screen bg-[#f7f8fb] px-5 py-6 text-slate-950 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <div>
-          <Link
-            href="/"
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            返回工作台
-          </Link>
-        </div>
-
-        <header className="rounded-md border border-slate-200 bg-white p-5">
+    <main className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
+        <header className="card p-5">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-cyan-700 text-white">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-gradient-primary text-white shadow-[var(--shadow-btn)]">
                 <StoreIcon className="h-6 w-6" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-sm font-medium text-cyan-700">{platformLabels[store.platform]}</p>
+                <p className="text-sm font-medium text-[var(--primary)]">{platformLabels[store.platform]}</p>
                 <h1 className="mt-1 text-2xl font-semibold tracking-normal text-slate-950">{store.name}</h1>
                 <p className="mt-2 text-sm text-slate-500">
                   {store.owner_name ? `负责人：${store.owner_name}` : "未设置负责人"}
                 </p>
               </div>
             </div>
-            <span className="inline-flex h-8 w-fit items-center rounded-md bg-slate-100 px-3 text-xs font-medium text-slate-600">
+            <span className="badge-gradient badge-muted">
               {store.status === "active" ? "启用" : store.status === "paused" ? "暂停" : "关闭"}
             </span>
           </div>
@@ -143,7 +161,7 @@ export default async function StorePage({ params, searchParams }: StorePageProps
 
         <InventoryAdvicePanel storeId={store.id} canEdit={canEdit} />
 
-        <section className="rounded-md border border-slate-200 bg-white p-5">
+        <section className="card p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold">店铺商品</h2>
@@ -179,7 +197,7 @@ export default async function StorePage({ params, searchParams }: StorePageProps
           </div>
         </section>
 
-        <section className="rounded-md border border-slate-200 bg-white p-5">
+        <section className="card p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold">库存概览</h2>
@@ -237,7 +255,7 @@ export default async function StorePage({ params, searchParams }: StorePageProps
           </div>
         </section>
 
-        <section className="rounded-md border border-slate-200 bg-white p-5">
+        <section className="card p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold">库存流水</h2>
@@ -284,7 +302,7 @@ function MetricCard({
   icon: LucideIcon;
 }) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-4">
+    <div className="card p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-slate-500">{label}</p>
         <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" />
@@ -307,7 +325,7 @@ function StoreWorkflowPanel({ steps }: { steps: StoreWorkflowStep[] }) {
   const nextStep = steps.find((step) => !step.done) ?? steps[steps.length - 1];
 
   return (
-    <section className="rounded-md border border-slate-200 bg-white p-5">
+    <section className="card p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-cyan-700 text-white">
@@ -439,7 +457,7 @@ function InventoryWorkflowPanel({
   ];
 
   return (
-    <section className="rounded-md border border-slate-200 bg-white p-5">
+    <section className="card p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-950">库存处理流程</h2>

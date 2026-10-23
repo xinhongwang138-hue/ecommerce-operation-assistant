@@ -1,5 +1,4 @@
-import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
-import Link from "next/link";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { getProduct } from "@/lib/api";
@@ -27,16 +26,9 @@ export default async function GenerationJobDetailPage({ params }: GenerationJobD
   const resultUrl = jobResultUrl(job);
 
   return (
-    <main className="min-h-screen bg-[#f7f8fb] px-5 py-6 text-slate-950 lg:px-8">
-      <div className="mx-auto flex max-w-5xl flex-col gap-6">
+    <main className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
         <header className="flex flex-col gap-4 border-b border-slate-200 pb-5">
-          <Link
-            href={`/products/${product.id}?tab=jobs`}
-            className="inline-flex w-fit items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-950"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            返回任务中心
-          </Link>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-sm font-medium text-emerald-700">{product.name}</p>
@@ -254,15 +246,15 @@ function JobStatusBadge({ job }: { job: GenerationJob }) {
     cancelled: "已取消",
   };
   const tone: Record<GenerationJob["status"], string> = {
-    failed: "bg-rose-50 text-rose-700",
-    pending: "bg-slate-100 text-slate-600",
-    running: "bg-amber-50 text-amber-700",
-    succeeded: "bg-emerald-50 text-emerald-700",
-    cancelled: "bg-slate-100 text-slate-500",
+    pending: "badge-muted",
+    running: "badge-running",
+    succeeded: "badge-success",
+    failed: "badge-danger",
+    cancelled: "badge-muted",
   };
 
   return (
-    <span className={`inline-flex h-8 w-fit items-center rounded-md px-2.5 text-xs font-medium ${tone[job.status]}`}>
+    <span className={`badge-gradient ${tone[job.status]}`}>
       {statusLabels[job.status]}
     </span>
   );
