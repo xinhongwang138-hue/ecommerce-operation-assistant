@@ -13,18 +13,42 @@ from __future__ import annotations
 
 import sys
 import threading
+from pathlib import Path
+from urllib.parse import urlparse
 
 from fakeredis import TcpFakeServer
 from fakeredis._core._server import FakeServer
 
+API_DIR = Path(__file__).resolve().parents[1]
+
+
+def _read_redis_url() -> str | None:
+    """从 api/.env.local（优先）或 api/.env 读取 REDIS_URL，避免把口令写进命令行。"""
+    for name in (".env.local", ".env"):
+        path = API_DIR / name
+        if not path.exists():
+            continue
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line.startswith("REDIS_URL="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+def _resolve_endpoint(argv: list[str]) -> tuple[str, int]:
+    if len(argv) >= 2:
+        return argv[1], int(argv[2]) if len(argv) > 2 else 6379
+    url = _read_redis_url()
+    if not url:
+        raise SystemExit("未提供密码，且未能从 api/.env.local 或 api/.env 解析 REDIS_URL")
+    parsed = urlparse(url)
+    if not parsed.password:
+        raise SystemExit("REDIS_URL 中未包含密码（格式应为 redis://:<password>@host:port/db）")
+    return parsed.password, parsed.port or 6379
+
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("用法: python run_redis_stub.py <password> [port]", file=sys.stderr)
-        return 2
-
-    password = sys.argv[1]
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 6379
+    password, port = _resolve_endpoint(sys.argv)
 
     # fakeredis 的 AUTH 比对 server_config["requirepass"]，需要构造带 config 的
     # FakeServer；TcpFakeServer 内部自建 FakeServer，因此这里替换成带密码的实例。

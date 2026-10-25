@@ -75,7 +75,13 @@ class Settings(BaseSettings):
 
     #核心方法是读取本地的.env文件覆盖当前对象中的变量值 
     # 推荐写成绝对路径的形式 指定固定的.env文件
-    model_config = SettingsConfigDict(env_file=API_DIR / ".env",env_file_encoding="utf-8",extra="ignore")
+    # 逐个加载：.env 为基线（对齐 docker-compose），.env.local 为可选的本机覆盖（后者优先）。
+    # 缺失的文件会被自动跳过，因此生产环境没有 .env.local 也能正常启动。
+    model_config = SettingsConfigDict(
+        env_file=(API_DIR / ".env", API_DIR / ".env.local"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     #特殊参数处理
     #1. 处理跨域来源 => 把一个长字符串拆分为多个来源
