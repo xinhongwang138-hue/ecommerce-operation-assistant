@@ -22,3 +22,6 @@ tmp_uvicorn_*.log
 web/AGENTS.md
 .next.old*/
 *.tmp
+
+# 安全审计报告仅保留本地，不入公开仓库
+SECURITY_AUDIT.md
