@@ -17,3 +17,8 @@ logs/
 *.log
 *.pid
 tmp_uvicorn_*.log
+
+# Next.js 自动生成的规则文件与构建残留，无需入库
+web/AGENTS.md
+.next.old*/
+*.tmp
