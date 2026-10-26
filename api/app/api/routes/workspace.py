@@ -71,7 +71,7 @@ FIELD_MAPPING_TEMPLATE = """source_field,target_field,required,description
 
 
 @router.get("/templates/performance-records.csv")
-def download_performance_template() -> Response:
+def download_performance_template(_current_user: Annotated[User, Depends(require_edit_permission)]) -> Response:
     """处理下载经营数据模板接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     return Response(
         content=PERFORMANCE_TEMPLATE,
@@ -81,19 +81,19 @@ def download_performance_template() -> Response:
 
 
 @router.get("/templates/products.csv")
-def download_product_template() -> Response:
+def download_product_template(_current_user: Annotated[User, Depends(require_edit_permission)]) -> Response:
     """处理下载商品模板接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     return _csv_response(PRODUCT_TEMPLATE, "products-template.csv")
 
 
 @router.get("/templates/sku-inventory.csv")
-def download_sku_inventory_template() -> Response:
+def download_sku_inventory_template(_current_user: Annotated[User, Depends(require_edit_permission)]) -> Response:
     """处理下载SKU库存模板接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     return _csv_response(SKU_INVENTORY_TEMPLATE, "sku-inventory-template.csv")
 
 
 @router.get("/templates/field-mapping.csv")
-def download_field_mapping_template() -> Response:
+def download_field_mapping_template(_current_user: Annotated[User, Depends(require_edit_permission)]) -> Response:
     """处理下载字段mapping模板接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     return _csv_response(FIELD_MAPPING_TEMPLATE, "field-mapping-template.csv")
 

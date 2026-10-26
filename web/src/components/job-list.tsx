@@ -168,6 +168,10 @@ export function GenerationJobList({
 
 /** 绝对地址媒体URL，客户端展示时复用与服务端一致的空值边界。 */
 function absoluteMediaUrl(url: string): string {
+  // 后端媒体路径需要登录态，交给同源代理转发。
+  if (url.startsWith("/uploads/")) {
+    return `/api/media/${url.slice("/uploads/".length)}`;
+  }
   try {
     return new URL(url, window.location.origin).href;
   } catch {

@@ -14,6 +14,7 @@ from app.api.routes.auth import (
     get_current_user,
     get_current_workspace,
     require_workspace_edit_permission,
+    require_workspace_owner_permission,
 )
 from app.db.session import get_db
 from app.models import (
@@ -63,6 +64,8 @@ router = APIRouter(tags=["agent-platform"])
 SessionDep = Annotated[Session, Depends(get_db)]
 WorkspaceDep = Annotated[WorkspaceAccess, Depends(get_current_workspace)]
 WorkspaceEditDep = Annotated[WorkspaceAccess, Depends(require_workspace_edit_permission)]
+# 记忆会持续影响 Agent 的后续行为，写入/撤销收紧到工作区 owner，避免被持久化提示注入。
+WorkspaceOwnerDep = Annotated[WorkspaceAccess, Depends(require_workspace_owner_permission)]
 
 
 @router.get("/workspaces", response_model=list[WorkspaceAccessRead])
@@ -392,7 +395,7 @@ def create_memory(
     workspace_id: int,
     payload: AgentMemoryCreate,
     db: SessionDep,
-    access: WorkspaceEditDep,
+    access: WorkspaceOwnerDep,
 ) -> AgentMemory:
     """处理创建记忆接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     # 先完成认证、Workspace 与资源归属校验，再进入会产生副作用的服务调用。
@@ -420,7 +423,7 @@ def revoke_memory(
     workspace_id: int,
     memory_id: int,
     db: SessionDep,
-    access: WorkspaceEditDep,
+    access: WorkspaceOwnerDep,
 ) -> AgentMemory:
     """处理撤销记忆接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     # 先完成认证、Workspace 与资源归属校验，再进入会产生副作用的服务调用。

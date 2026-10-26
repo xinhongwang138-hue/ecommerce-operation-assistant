@@ -3209,8 +3209,15 @@ function adRecommendationConfirmationTone(status: string): string {
 
 /** 绝对地址媒体URL，封装当前页面重复使用的转换或展示规则，并统一处理空值边界。 */
 function absoluteMediaUrl(url: string): string {
+  if (!url) {
+    return url;
+  }
   if (url.startsWith("http://") || url.startsWith("https://")) {
     return url;
+  }
+  // 后端 /uploads 需要登录态，统一走同源代理，由服务端附加 Bearer。
+  if (url.startsWith("/uploads/")) {
+    return `/api/media/${url.slice("/uploads/".length)}`;
   }
   return `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"}${url}`;
 }

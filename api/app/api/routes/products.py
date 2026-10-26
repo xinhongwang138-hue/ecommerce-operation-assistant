@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.routes.auth import require_ad_confirmation_permission, require_edit_permission, require_view_permission
+from app.api.routes.auth import require_ad_confirmation_permission, require_edit_permission, require_view_permission, workspace_scope
 from app.db.session import get_db
 from app.models import (
     AdExperiment,
@@ -103,7 +103,7 @@ SessionDep = Annotated[Session, Depends(get_db)]
 def get_product_or_404(db: Session, product_id: int) -> Product:
     """处理获取商品or404接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     product = db.get(Product, product_id)
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if product is None or (workspace_id is not None and product.workspace_id != workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     return product
@@ -204,7 +204,7 @@ def ensure_store_exists(db: Session, store_id: int | None) -> None:
     if store_id is None:
         return
     store = db.get(Store, store_id)
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if store is None or (workspace_id is not None and store.workspace_id != workspace_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Store not found")
 
@@ -251,7 +251,7 @@ def list_products(
     """处理查询products接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     # 先完成认证、Workspace 与资源归属校验，再进入会产生副作用的服务调用。
     statement = select(Product)
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if workspace_id is not None:
         statement = statement.where(Product.workspace_id == workspace_id)
     statement = statement.order_by(Product.created_at.desc()).offset(offset).limit(limit)
@@ -268,7 +268,7 @@ def create_product(
     # 先完成认证、Workspace 与资源归属校验，再进入会产生副作用的服务调用。
     ensure_store_exists(db, payload.store_id)
     product = Product(
-        workspace_id=db.info.get("workspace_id"),
+        workspace_id=workspace_scope(db),
         **payload.model_dump(mode="json"),
     )
     db.add(product)
@@ -319,7 +319,7 @@ def get_product(
             selectinload(Product.public_link_parse_tasks),
         )
     )
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if workspace_id is not None:
         statement = statement.where(Product.workspace_id == workspace_id)
     product = db.scalars(statement).first()

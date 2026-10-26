@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.routes.auth import require_edit_permission, require_view_permission
+from app.api.routes.auth import require_edit_permission, require_view_permission, workspace_scope
 from app.db.session import get_db
 from app.models import InventoryItem, InventoryMovement, PlatformAccount, PlatformAccountStatus, Product, ProductSku, Store, User
 from app.schemas import (
@@ -34,7 +34,7 @@ SessionDep = Annotated[Session, Depends(get_db)]
 def get_store_or_404(db: Session, store_id: int) -> Store:
     """处理获取店铺or404接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     store = db.get(Store, store_id)
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if store is None or (workspace_id is not None and store.workspace_id != workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store not found")
     return store
@@ -58,7 +58,7 @@ def list_stores(
     """处理查询stores接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     # 先完成认证、Workspace 与资源归属校验，再进入会产生副作用的服务调用。
     statement = select(Store).options(selectinload(Store.platform_accounts))
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if workspace_id is not None:
         statement = statement.where(Store.workspace_id == workspace_id)
     statement = statement.order_by(Store.created_at.desc()).offset(offset).limit(limit)
@@ -72,7 +72,7 @@ def create_store(
     _current_user: Annotated[User, Depends(require_edit_permission)],
 ) -> Store:
     """处理创建店铺接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
-    store = Store(workspace_id=db.info.get("workspace_id"), **payload.model_dump(mode="json"))
+    store = Store(workspace_id=workspace_scope(db), **payload.model_dump(mode="json"))
     db.add(store)
     db.commit()
     db.refresh(store)
@@ -92,7 +92,7 @@ def get_store(
         .where(Store.id == store_id)
         .options(selectinload(Store.platform_accounts))
     )
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if workspace_id is not None:
         statement = statement.where(Store.workspace_id == workspace_id)
     store = db.scalars(statement).first()

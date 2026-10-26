@@ -194,32 +194,54 @@ SALES_HINT_PATTERN = re.compile(
 
 def fetch_competitor_profile(url: str) -> LinkProfile:
     """获取竞品资料；集中执行业务校验、状态变更与持久化，并返回可验证结果。"""
-    # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
-    _validate_public_url(url)
-    try:
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=12,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
-            },
-        ) as client:
-            # 仅抓取公开 HTML，不携带用户 Cookie 或平台登录态，符合“有限链接解析”的产品边界。
-            response = client.get(url)
-            response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise LinkExtractionError(f"链接抓取失败：{exc}") from exc
+    # 手动处理重定向：每一跳都重新做公网地址校验，避免用 302 把请求引导到内网。
+    html, final_url = _fetch_public_html(url)
+    return extract_competitor_profile(html, final_url)
 
-    content_type = response.headers.get("content-type", "")
-    if "text/html" not in content_type and "application/xhtml" not in content_type:
-        raise LinkExtractionError("当前链接返回的不是 HTML 页面")
 
-    return extract_competitor_profile(response.text, str(response.url))
+MAX_HTML_BYTES = 2 * 1024 * 1024
+MAX_REDIRECTS = 3
+_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
+}
+
+
+def _fetch_public_html(url: str) -> tuple[str, str]:
+    """抓取公网 HTML：逐跳校验目标、限制响应体大小，且不携带任何用户凭据。"""
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        _validate_public_url(current)
+        try:
+            with httpx.Client(follow_redirects=False, timeout=12, headers=_FETCH_HEADERS) as client:
+                with client.stream("GET", current) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise LinkExtractionError("链接重定向缺少目标地址")
+                        current = urljoin(current, location)
+                        continue
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+                    if "text/html" not in content_type and "application/xhtml" not in content_type:
+                        raise LinkExtractionError("当前链接返回的不是 HTML 页面")
+                    chunks: list[bytes] = []
+                    total = 0
+                    for chunk in response.iter_bytes():
+                        total += len(chunk)
+                        if total > MAX_HTML_BYTES:
+                            break
+                        chunks.append(chunk)
+                    body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+                    return body, str(response.url)
+        except httpx.HTTPError as exc:
+            # 不回显底层错误细节，避免把内网地址、代理信息带进响应。
+            raise LinkExtractionError("链接抓取失败（网络异常或页面不可访问）") from exc
+    raise LinkExtractionError("链接重定向次数过多")
 
 
 def extract_competitor_profile(html: str, page_url: str) -> LinkProfile:
@@ -281,19 +303,32 @@ def _validate_public_url(url: str) -> None:
 
 def _is_blocked_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """判断blocked地址，统一主流程中的格式、默认值和异常边界。"""
-    # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
+    # IPv4-mapped IPv6（如 ::ffff:127.0.0.1）必须先还原成 IPv4 再判定，否则可绕过网段黑名单。
+    if isinstance(ip, ipaddress.IPv6Address):
+        mapped = ip.ipv4_mapped
+        if mapped is not None:
+            return _is_blocked_address(mapped)
+
     blocked_networks = [
         ipaddress.ip_network("0.0.0.0/8"),
         ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("100.64.0.0/10"),   # CGNAT
         ipaddress.ip_network("127.0.0.0/8"),
         ipaddress.ip_network("169.254.0.0/16"),
         ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.0.0.0/24"),
         ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("::/128"),
         ipaddress.ip_network("::1/128"),
         ipaddress.ip_network("fc00::/7"),
         ipaddress.ip_network("fe80::/10"),
     ]
-    return any(ip in network for network in blocked_networks) or ip.is_multicast or ip.is_unspecified
+    return (
+        any(ip in network for network in blocked_networks)
+        or ip.is_multicast
+        or ip.is_unspecified
+        or ip.is_link_local
+    )
 
 
 def _adapter_for_url(page_url: str) -> PlatformExtractionAdapter:

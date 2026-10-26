@@ -113,9 +113,8 @@ def test_viewer_cannot_test_model_settings() -> None:
     assert response.status_code == 403
 
 
-def test_operator_can_update_model_settings() -> None:
-    """验证“operatorcan更新模型配置”场景，确保重构后仍满足预期业务与安全边界。"""
-    # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
+def test_operator_cannot_update_model_settings() -> None:
+    """模型配置是全平台共享的，operator 不再允许修改，避免跨租户配置投毒。"""
     engine = _engine()
     Base.metadata.create_all(engine)
 
@@ -130,8 +129,27 @@ def test_operator_can_update_model_settings() -> None:
     finally:
         app.dependency_overrides.clear()
 
+    assert response.status_code == 403
+
+
+def test_owner_can_update_model_settings() -> None:
+    """全局 owner 仍可维护模型配置。"""
+    engine = _engine()
+    Base.metadata.create_all(engine)
+
+    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OWNER)
+    try:
+        response = TestClient(app).patch(
+            "/api/v1/model-settings",
+            json={"text": {"model": "owner-model"}},
+            headers={"Authorization": "Bearer test"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
     assert response.status_code == 200
-    assert response.json()["text"]["model"] == "operator-model"
+    assert response.json()["text"]["model"] == "owner-model"
 
 
 def _session() -> Session:

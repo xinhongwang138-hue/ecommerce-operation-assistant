@@ -15,6 +15,7 @@ export async function POST(request: Request) {
   cookieStore.set(WORKSPACE_COOKIE_NAME, String(workspaceId), {
     httpOnly: true,
     sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
     path: "/",
   });
   return NextResponse.redirect(new URL(`/agent?workspace=${workspaceId}`, request.url), 303);

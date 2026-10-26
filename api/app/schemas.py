@@ -858,14 +858,34 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str | None = Field(default=None, min_length=8, max_length=128)
+    password: str | None = Field(default=None, min_length=10, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def _password_strength(cls, value: str | None) -> str | None:
+        """口令至少 10 位且同时包含字母与数字，拒绝纯数字/纯字母弱口令。"""
+        if value is None:
+            return value
+        if not any(ch.isalpha() for ch in value) or not any(ch.isdigit() for ch in value):
+            raise ValueError("password must contain both letters and digits")
+        return value
 
 
 class UserUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     role: UserRole | None = None
     status: UserStatus | None = None
-    password: str | None = Field(default=None, min_length=8, max_length=128)
+    password: str | None = Field(default=None, min_length=10, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def _password_strength(cls, value: str | None) -> str | None:
+        """与创建口径一致：改密同样要求字母+数字且不少于 10 位。"""
+        if value is None:
+            return value
+        if not any(ch.isalpha() for ch in value) or not any(ch.isdigit() for ch in value):
+            raise ValueError("password must contain both letters and digits")
+        return value
 
 
 class UserRead(UserBase):
@@ -1300,7 +1320,8 @@ class AgentMemoryRead(BaseModel):
 
 class OcrExtractRequest(BaseModel):
     # 前端直接把图片读成 base64 提交，避免为了取字再引入 multipart 依赖和临时文件清理。
-    image_base64: str = Field(min_length=16)
+    # 上限与 8MB 图片解码后的 base64 长度匹配（约 11.2M 字符），防止超大请求撑爆内存。
+    image_base64: str = Field(min_length=16, max_length=12_000_000)
     mime_type: str = Field(default="image/png", max_length=64)
     prompt: str | None = Field(default=None, max_length=500)
 

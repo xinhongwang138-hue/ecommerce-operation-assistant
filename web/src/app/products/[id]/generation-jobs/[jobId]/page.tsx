@@ -269,9 +269,12 @@ function jobResultUrl(job: GenerationJob): string | null {
 
 /** 绝对地址媒体URL，封装当前页面重复使用的转换或展示规则，并统一处理空值边界。 */
 function absoluteMediaUrl(url: string): string {
-  // worker 可返回完整 URL 或后端媒体相对路径；展示层统一补齐 API 域名，不改写入库结果。
+  // worker 可返回完整 URL 或后端媒体相对路径；/uploads 走同源代理以携带登录态。
   if (url.startsWith("http://") || url.startsWith("https://")) {
     return url;
+  }
+  if (url.startsWith("/uploads/")) {
+    return `/api/media/${url.slice("/uploads/".length)}`;
   }
   return `${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"}${url}`;
 }

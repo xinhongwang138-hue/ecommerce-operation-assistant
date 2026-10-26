@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.agents.contracts import ReviewResumePayload
-from app.api.routes.auth import require_edit_permission, require_view_permission
+from app.api.routes.auth import require_edit_permission, require_view_permission, workspace_scope
 from app.db.session import get_db
 from app.models import AgentRun, Product, User
 from app.schemas import AgentRunRead, AgentRunReviewCreate
@@ -39,7 +39,7 @@ def create_agent_run(
     """处理创建Agent执行接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     # 先完成认证、Workspace 与资源归属校验，再进入会产生副作用的服务调用。
     product = db.get(Product, product_id)
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if product is None or (workspace_id is not None and product.workspace_id != workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     run_id: int | None = None
@@ -72,7 +72,7 @@ def list_product_agent_runs(
     """处理查询商品Agentruns接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
     # 先完成认证、Workspace 与资源归属校验，再进入会产生副作用的服务调用。
     product = db.get(Product, product_id)
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if product is None or (workspace_id is not None and product.workspace_id != workspace_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     statement = (
@@ -135,7 +135,7 @@ def _get_run_or_404(db: Session, run_id: int) -> AgentRun:
         .where(AgentRun.id == run_id)
         .options(selectinload(AgentRun.events), selectinload(AgentRun.reviews))
     )
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
     if workspace_id is not None:
         statement = statement.where(AgentRun.workspace_id == workspace_id)
     run = db.scalar(statement)
@@ -184,7 +184,7 @@ async def stream_agent_run(
     """处理Agent执行流式接口；完成身份、Workspace、资源归属和输入校验后按 SSE 增量推送事件。"""
     # 入口即完成认证与资源归属校验；生成器独立会话持续观测同一 run 的增量事件。
     _get_run_or_404(db, run_id)
-    workspace_id = db.info.get("workspace_id")
+    workspace_id = workspace_scope(db)
 
     async def event_generator():
         last_event_id = 0

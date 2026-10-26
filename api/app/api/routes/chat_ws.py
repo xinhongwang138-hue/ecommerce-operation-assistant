@@ -33,7 +33,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
+from collections import deque
+from threading import Lock
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
@@ -51,6 +54,7 @@ from app.services.auth import (
     parse_access_token,
 )
 from app.services.outbox import kick_outbox_dispatcher
+from app.services.token_store import consume_ticket
 from app.services.workspaces import WorkspaceAccessError, resolve_workspace_access
 
 logger = logging.getLogger(__name__)
@@ -62,6 +66,10 @@ _WS_FORBIDDEN_CLOSE_CODE = 4403
 _TICKET_TTL_SECONDS = 60
 _POLL_SECONDS = 0.5
 _MAX_TURN_SECONDS = 300.0
+# 单用户每分钟最多发起 12 轮，防止用聊天通道刷任务/刷模型成本。
+_TURN_LIMIT_PER_MINUTE = 12
+_turn_hits: dict[int, deque[float]] = {}
+_turn_lock = Lock()
 # awaiting_approval 需要人工放行，对聊天轮次同样视为终态。
 _TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled", "awaiting_approval"}
 
@@ -81,14 +89,19 @@ def create_chat_ws_ticket(
 @router.websocket("/ws/chat")
 async def websocket_chat(
     websocket: WebSocket,
-    ticket: Annotated[str, Query(description="POST /chat/ws-ticket 换取的一次性票据")],
     workspace_id: Annotated[int, Query(description="目标 Workspace，必须是当前用户的成员租户")],
+    ticket: Annotated[str | None, Query(description="(兼容) 票据；推荐改用 Sec-WebSocket-Protocol 传递")] = None,
 ) -> None:
     """处理 WebSocket 聊天连接；先鉴权与会话校验，再进入消息循环。
 
     结构：主循环只负责收帧；每轮对话跑在独立 asyncio 任务里，
     因此"新消息打断上一轮"和显式 cancel 能在观察轮次期间实时生效。
     """
+    # 票据优先走子协议头，避免出现在 URL 与访问日志里；query 参数仅保留兼容。
+    accept_protocol, ticket = _extract_ticket(websocket, ticket)
+    if not ticket:
+        await websocket.close(code=_WS_AUTH_CLOSE_CODE, reason="missing ticket")
+        return
     try:
         user = _resolve_user(ticket)
         workspace_id = _resolve_workspace(user=user, workspace_id=workspace_id)
@@ -97,7 +110,7 @@ async def websocket_chat(
         await websocket.close(code=_WS_AUTH_CLOSE_CODE, reason=str(exc)[:120])
         return
 
-    await websocket.accept()
+    await websocket.accept(subprotocol=accept_protocol)
     current_turn: asyncio.Task | None = None
     turn_state: dict[str, int | None] = {"task_id": None}
 
@@ -134,6 +147,9 @@ async def websocket_chat(
                 text = (payload.get("text") or "").strip()
                 if not text:
                     await _send(websocket, {"type": "error", "message": "empty text"})
+                    continue
+                if not _allow_turn(user.id):
+                    await _send(websocket, {"type": "error", "message": "请求过于频繁，请稍后再试"})
                     continue
                 if await stop_current_turn("new user_text arrived"):
                     # 旧轮次已停止，通知前端立即停播旧回复，再开始新一轮。
@@ -204,11 +220,41 @@ def _resolve_user(ticket: str) -> User:
         user_id = int(payload.get("sub", 0))
     except (AuthTokenError, ValueError) as exc:
         raise _WSAuthError(f"invalid ticket: {exc}") from exc
+    # 一次性消费：同一票据第二次握手直接拒绝，杜绝 60 秒窗口内的重放。
+    if not consume_ticket(payload.get("jti")):
+        raise _WSAuthError("ticket already used or expired")
     with SessionLocal() as db:
         try:
             return ensure_user_can_login(db.get(User, user_id))
         except AuthTokenError as exc:
             raise _WSAuthError(str(exc)) from exc
+
+
+def _extract_ticket(websocket: WebSocket, fallback: str | None) -> tuple[str | None, str | None]:
+    """从 Sec-WebSocket-Protocol 中提取 ticket.<token>；返回(回显协议, 票据)。"""
+    offered = [
+        item.strip()
+        for item in (websocket.headers.get("sec-websocket-protocol") or "").split(",")
+        if item.strip()
+    ]
+    for protocol in offered:
+        if protocol.startswith("ticket."):
+            return protocol, protocol[len("ticket."):]
+    return None, fallback
+
+
+def _allow_turn(user_id: int) -> bool:
+    """按用户滑动窗口限制聊天轮次，防止刷任务与模型成本。"""
+    now = time.time()
+    window_start = now - 60
+    with _turn_lock:
+        hits = _turn_hits.setdefault(user_id, deque())
+        while hits and hits[0] < window_start:
+            hits.popleft()
+        if len(hits) >= _TURN_LIMIT_PER_MINUTE:
+            return False
+        hits.append(now)
+        return True
 
 
 def _resolve_workspace(*, user: User, workspace_id: int) -> int:

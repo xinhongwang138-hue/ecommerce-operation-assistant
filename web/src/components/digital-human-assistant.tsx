@@ -151,8 +151,11 @@ export function DigitalHumanAssistant({ workspaceId, products, stores }: Digital
       pushMessage("system", "获取连接票据失败：请确认已登录且具备当前 Workspace 的编辑权限。");
       return null;
     }
+    // 票据改走 Sec-WebSocket-Protocol，避免出现在 URL 和访问日志里。
+    const ticketProtocol = `ticket.${ticket}`;
     const ws = new WebSocket(
-      `${wsBaseUrl}${WS_PATH}?ticket=${encodeURIComponent(ticket)}&workspace_id=${workspaceId}`,
+      `${wsBaseUrl}${WS_PATH}?workspace_id=${workspaceId}`,
+      [ticketProtocol],
     );
     wsRef.current = ws;
     return new Promise((resolve) => {

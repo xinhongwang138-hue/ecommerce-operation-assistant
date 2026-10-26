@@ -4,9 +4,11 @@ import hmac
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from app.core.config import Settings, get_settings
 from app.models import User, UserStatus
+from app.services.token_store import register_ticket
 
 
 class AuthTokenError(ValueError):
@@ -19,10 +21,13 @@ def create_access_token(user: User, settings: Settings | None = None) -> str:
     settings = settings or get_settings()
     expires_at = datetime.now(UTC) + timedelta(minutes=settings.auth_token_expire_minutes)
     # Token 只放用户身份、角色和过期时间，避免把可变权限明细或敏感配置写进客户端可见载荷。
+    # purpose/jti 让访问令牌与 WS 票据在语义上不可互换，并支持登出后按 jti 撤销。
     payload = {
         "sub": str(user.id),
         "email": user.email,
         "role": user.role,
+        "purpose": "access",
+        "jti": uuid4().hex,
         "exp": int(expires_at.timestamp()),
     }
     encoded_payload = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
@@ -36,13 +41,17 @@ def create_ws_ticket(user: User, *, ttl_seconds: int = 60, settings: Settings | 
     # 因此只签发一次性短票据：前端先用登录态换 ticket，再带 ticket 连接 /ws/chat。
     settings = settings or get_settings()
     expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+    jti = uuid4().hex
     payload = {
         "sub": str(user.id),
         "purpose": "ws_ticket",
+        "jti": jti,
         "exp": int(expires_at.timestamp()),
     }
     encoded_payload = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     signature = _sign(encoded_payload, settings.auth_secret_key)
+    # 票据登记进一次性存储：真正消费后即失效，60 秒窗口内也无法重放。
+    register_ticket(jti, ttl_seconds)
     return f"{encoded_payload}.{signature}"
 
 

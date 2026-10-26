@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = Field(default=None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
     auth_secret_key: str = Field(default="dev-auth-secret-change-me", alias="AUTH_SECRET_KEY")
     auth_token_expire_minutes: int = Field(default=60 * 24 * 7, alias="AUTH_TOKEN_EXPIRE_MINUTES")
+    # 安全基线：限流/登录锁定/请求体上限。开发与测试环境自动关闭限流，避免影响本地调试。
+    rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
+    rate_limit_per_minute: int = Field(default=240, alias="RATE_LIMIT_PER_MINUTE")
+    login_max_attempts: int = Field(default=8, alias="LOGIN_MAX_ATTEMPTS")
+    login_lockout_seconds: int = Field(default=300, alias="LOGIN_LOCKOUT_SECONDS")
+    max_request_bytes: int = Field(default=16 * 1024 * 1024, alias="MAX_REQUEST_BYTES")
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, alias="LLM_MODEL")
@@ -88,6 +94,13 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip().rstrip("/") for origin in self.api_cors_origins.split(",") if origin.strip()]
+
+    @property
+    def rate_limiting_active(self) -> bool:
+        """生产环境默认开启限流；开发/测试环境默认关闭，便于本地联调与自动化测试。"""
+        if not self.rate_limit_enabled:
+            return False
+        return self.app_env.lower() not in {"development", "dev", "test", "testing"}
 
     #2. 检查点数据库地址
     @property
