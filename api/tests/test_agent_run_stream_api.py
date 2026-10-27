@@ -1,25 +1,24 @@
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes.auth import get_current_user
 from app.db import session as db_session
 from app.db.session import get_db
 from app.main import app
 from app.models import AgentRun, AgentRunEvent, AgentRunStatus, Base, Platform, Product, User, UserRole
+from support import make_engine, make_session_override
 
 
 def test_stream_completed_run_emits_snapshot_and_done(monkeypatch) -> None:
     """校验已完成执行可通过 SSE 收到首帧快照与终态事件。"""
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, user_id = _seed_product_and_user(engine)
     run_id = _seed_run(engine, product_id, user_id, AgentRunStatus.COMPLETED)
     monkeypatch.setattr(db_session, "SessionLocal", _session_factory(engine))
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         with TestClient(app).stream(
@@ -41,11 +40,11 @@ def test_stream_completed_run_emits_snapshot_and_done(monkeypatch) -> None:
 
 def test_stream_unknown_run_returns_404(monkeypatch) -> None:
     """校验不存在的执行不会建立流式连接，仍沿用既有错误语义。"""
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     _product_id, user_id = _seed_product_and_user(engine)
     monkeypatch.setattr(db_session, "SessionLocal", _session_factory(engine))
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).get(
@@ -108,19 +107,8 @@ def _session_factory(engine):
     return sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
-def _override_db(engine):
-    """覆盖数据库依赖，确保请求与流式生成器读取同一测试库。"""
-    def override_db():
-        with Session(engine) as db:
-            yield db
-    return override_db
-
-
 def _user(user_id: int, role: UserRole) -> User:
     """构造认证依赖所需的用户对象。"""
     return User(id=user_id, email=f"{role.value}@example.com", display_name=role.value, role=role)
 
 
-def _engine():
-    """构造内存测试引擎，保证用例相互隔离。"""
-    return create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)

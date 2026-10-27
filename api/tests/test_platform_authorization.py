@@ -1,7 +1,5 @@
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
@@ -20,15 +18,17 @@ from app.models import (
     WorkspaceStatus,
 )
 
+from support import make_engine, make_session_override
+
 
 def test_platform_authorization_start_requires_edit_permission() -> None:
     """验证“平台授权启动requiresedit权限”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     store_id, account_id = _seed_account(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         response = TestClient(app).post(
@@ -45,11 +45,11 @@ def test_platform_authorization_start_requires_edit_permission() -> None:
 def test_platform_authorization_start_records_safe_metadata() -> None:
     """验证“平台授权启动records安全metadata”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     store_id, account_id = _seed_account(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -84,12 +84,12 @@ def test_platform_authorization_start_records_safe_metadata() -> None:
 def test_platform_authorization_callback_updates_account_status() -> None:
     """验证“平台授权callbackupdates账号状态”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     store_id, account_id = _seed_account(engine)
     state = _start_authorization(engine, store_id, account_id)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -112,12 +112,12 @@ def test_platform_authorization_callback_updates_account_status() -> None:
 def test_platform_authorization_callback_rejects_state_mismatch() -> None:
     """验证“平台授权callbackrejects状态mismatch”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     store_id, account_id = _seed_account(engine)
     _start_authorization(engine, store_id, account_id)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -138,7 +138,7 @@ def test_platform_authorization_rejects_other_workspace_account() -> None:
     `account.store_id` 的父子归属，而父子关系天然成立，等于任何已登录租户都能
     凭 (store_id, account_id) 整数对改写别租户账号的授权状态。
     """
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_a, workspace_b, store_b, account_b = _seed_split_workspace_accounts(engine)
     with Session(engine) as db:
@@ -149,7 +149,7 @@ def test_platform_authorization_rejects_other_workspace_account() -> None:
         ("authorization/callback-placeholder", {"state": "guessed", "status": "authorized"}),
     ]
     for path, payload in attempts:
-        app.dependency_overrides[get_db] = _override_db(engine)
+        app.dependency_overrides[get_db] = make_session_override(engine)
         app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
         try:
             response = TestClient(app).post(
@@ -170,7 +170,7 @@ def test_platform_authorization_rejects_other_workspace_account() -> None:
 
     # 正向对照：同一组主键、同一用户，只把租户切到资源真正归属的 B，就必须放行。
     # 缺了这一段，上面的 404 可能只是被成员关系或外键顺带挡掉的，测不到租户边界。
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         allowed = TestClient(app).post(
@@ -186,7 +186,7 @@ def test_platform_authorization_rejects_other_workspace_account() -> None:
 def _start_authorization(engine, store_id: int, account_id: int) -> str:
     """构造或执行测试所需的启动授权，让测试数据、依赖替身与断言保持集中。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -211,25 +211,6 @@ def _seed_account(engine) -> tuple[int, int]:
         db.add(account)
         db.commit()
         return store.id, account.id
-
-
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def _dependency():
-        """构造或执行测试所需的依赖覆盖，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return _dependency
 
 
 def _user(role: UserRole) -> User:

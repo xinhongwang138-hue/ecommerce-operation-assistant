@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
@@ -11,6 +10,7 @@ from app.main import app
 from app.models import Base, ModelProviderSetting, ModelTarget
 from app.models import User, UserRole
 from app.services.model_settings import read_model_settings, update_model_settings
+from support import make_engine, make_session_override
 
 
 def test_read_model_settings_uses_database_before_env() -> None:
@@ -76,10 +76,10 @@ def test_update_model_settings_keeps_existing_secret_when_blank() -> None:
 def test_viewer_cannot_update_model_settings() -> None:
     """验证“viewercannot更新模型配置”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         response = TestClient(app).patch(
@@ -96,10 +96,10 @@ def test_viewer_cannot_update_model_settings() -> None:
 def test_viewer_cannot_test_model_settings() -> None:
     """验证“viewercannottest模型配置”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         response = TestClient(app).post(
@@ -115,10 +115,10 @@ def test_viewer_cannot_test_model_settings() -> None:
 
 def test_operator_cannot_update_model_settings() -> None:
     """模型配置是全平台共享的，operator 不再允许修改，避免跨租户配置投毒。"""
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).patch(
@@ -134,10 +134,10 @@ def test_operator_cannot_update_model_settings() -> None:
 
 def test_owner_can_update_model_settings() -> None:
     """全局 owner 仍可维护模型配置。"""
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OWNER)
     try:
         response = TestClient(app).patch(
@@ -157,25 +157,6 @@ def _session() -> Session:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return Session(engine)
-
-
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def override_db():
-        """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return override_db
 
 
 def _user(role: UserRole) -> User:

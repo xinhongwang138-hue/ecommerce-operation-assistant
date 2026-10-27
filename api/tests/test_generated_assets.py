@@ -1,22 +1,21 @@
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
 from app.main import app
 from app.models import Base, CreativePlan, CreativePlanType, GeneratedAsset, Platform, Product, User, UserRole
+from support import make_engine, make_session_override
 
 
 def test_update_generated_asset_review_fields_updates_plan_and_asset() -> None:
     """验证“更新生成素材审核fieldsupdates方案and素材”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, plan_id = _seed_asset(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).patch(
@@ -53,11 +52,11 @@ def test_update_generated_asset_review_fields_updates_plan_and_asset() -> None:
 def test_update_generated_asset_rejects_unknown_review_status() -> None:
     """验证“更新生成素材rejectsunknown审核状态”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, plan_id = _seed_asset(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).patch(
@@ -108,25 +107,6 @@ def _seed_asset(engine) -> tuple[int, int]:
         )
         db.commit()
         return product.id, plan.id
-
-
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def _dependency():
-        """构造或执行测试所需的依赖覆盖，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return _dependency
 
 
 def _user(role: UserRole) -> User:

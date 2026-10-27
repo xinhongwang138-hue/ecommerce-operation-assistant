@@ -8,6 +8,7 @@ from app.main import app
 from app.api.routes.auth import get_current_user
 from app.models import Base, InventoryItem, InventoryMovementType, Platform, Product, ProductSku, Store, User, UserRole
 from app.services.inventory import adjust_inventory
+from support import make_engine, make_session_override
 
 
 def test_store_inventory_summary_counts_low_stock_and_available_quantity() -> None:
@@ -126,7 +127,7 @@ def test_store_inventory_advice_uses_rule_fallback_for_low_stock() -> None:
     Base.metadata.create_all(engine)
     store_id = _seed_low_stock_store(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: User(
         id=1,
         email="operator@example.com",
@@ -160,7 +161,7 @@ def test_viewer_cannot_generate_store_inventory_advice() -> None:
     Base.metadata.create_all(engine)
     store_id = _seed_low_stock_store(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: User(
         id=1,
         email="viewer@example.com",
@@ -176,16 +177,6 @@ def test_viewer_cannot_generate_store_inventory_advice() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
-
-
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def override_db():
-        """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return override_db
 
 
 def _seed_low_stock_store(engine) -> int:

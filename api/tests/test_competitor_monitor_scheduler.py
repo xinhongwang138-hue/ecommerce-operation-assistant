@@ -2,9 +2,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
@@ -23,16 +21,17 @@ from app.models import (
     WorkspaceStatus,
 )
 from app.services.link_extraction import LinkProfile
+from support import make_engine, make_session_override
 
 
 def test_run_due_competitor_monitors_requires_edit_permission() -> None:
     """验证“执行到期竞品monitorsrequiresedit权限”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     _seed_due_monitor(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         response = TestClient(app).post(
@@ -48,7 +47,7 @@ def test_run_due_competitor_monitors_requires_edit_permission() -> None:
 def test_run_due_competitor_monitors_consumes_due_monitors(monkeypatch) -> None:
     """验证“执行到期竞品monitorsconsumes到期monitors”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     due_monitor_id = _seed_due_monitor(engine)
     future_monitor_id = _seed_future_monitor(engine)
@@ -66,7 +65,7 @@ def test_run_due_competitor_monitors_consumes_due_monitors(monkeypatch) -> None:
 
     monkeypatch.setattr("app.services.competitor_monitoring.fetch_competitor_profile", fake_fetch_profile)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -100,7 +99,7 @@ def test_run_due_competitor_monitors_scopes_to_current_workspace(monkeypatch) ->
     回归审计时新发现的 IDOR。CompetitorMonitor 自身没有 workspace_id，服务层原先只按
     status/next_check_at 取行，于是任一租户触发都会跑掉并回显他租户的监控与错误文本。
     """
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_a, workspace_b = _seed_two_workspaces(engine)
     due = datetime.now(UTC) - timedelta(minutes=5)
@@ -120,7 +119,7 @@ def test_run_due_competitor_monitors_scopes_to_current_workspace(monkeypatch) ->
 
     monkeypatch.setattr("app.services.competitor_monitoring.fetch_competitor_profile", fake_fetch_profile)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -215,25 +214,6 @@ def _seed_monitor(engine, next_check_at: datetime) -> int:
         db.add(monitor)
         db.commit()
         return monitor.id
-
-
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def _dependency():
-        """构造或执行测试所需的依赖覆盖，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return _dependency
 
 
 def _user(role: UserRole) -> User:

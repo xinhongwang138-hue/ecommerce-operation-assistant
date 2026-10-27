@@ -1,9 +1,7 @@
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
@@ -11,6 +9,7 @@ from app.main import app
 from app.models import Base, User, UserRole
 from app.services.auth import create_access_token, parse_access_token
 from app.services.users import hash_password
+from support import make_engine, make_session_override
 
 
 def test_create_and_parse_access_token() -> None:
@@ -29,7 +28,7 @@ def test_create_and_parse_access_token() -> None:
 def test_login_and_me_api() -> None:
     """验证“登录andmeapi”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         db.add(
@@ -68,7 +67,7 @@ def test_login_and_me_api() -> None:
 def test_login_rejects_wrong_password() -> None:
     """验证“登录rejectswrongpassword”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         db.add(
@@ -97,10 +96,3 @@ def test_login_rejects_wrong_password() -> None:
         app.dependency_overrides.pop(get_db, None)
 
 
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )

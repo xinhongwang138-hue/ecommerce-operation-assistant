@@ -1,22 +1,21 @@
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
 from app.main import app
 from app.models import AdExperiment, Base, Platform, Product, Store, User, UserRole
 from app.models import ProductSku, ProductSkuStatus
+from support import make_engine, make_session_override
 
 
 def test_anonymous_cannot_read_business_data() -> None:
     """验证“anonymouscannot读取business数据”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     try:
         client = TestClient(app)
         product_response = client.get("/api/v1/products")
@@ -31,11 +30,11 @@ def test_anonymous_cannot_read_business_data() -> None:
 def test_viewer_can_read_business_data() -> None:
     """验证“viewercan读取business数据”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, store_id = _seed_product_and_store(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         client = TestClient(app)
@@ -55,10 +54,10 @@ def test_viewer_can_read_business_data() -> None:
 def test_viewer_cannot_create_store() -> None:
     """验证“viewercannot创建店铺”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         response = TestClient(app).post(
@@ -75,10 +74,10 @@ def test_viewer_cannot_create_store() -> None:
 def test_operator_can_create_store() -> None:
     """验证“operatorcan创建店铺”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -96,10 +95,10 @@ def test_operator_can_create_store() -> None:
 def test_viewer_cannot_create_product() -> None:
     """验证“viewercannot创建商品”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         response = TestClient(app).post(
@@ -116,10 +115,10 @@ def test_viewer_cannot_create_product() -> None:
 def test_operator_can_create_product() -> None:
     """验证“operatorcan创建商品”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -137,11 +136,11 @@ def test_operator_can_create_product() -> None:
 def test_operator_can_update_product_sku_status_and_warning_threshold() -> None:
     """验证“operatorcan更新商品SKU状态andwarningthreshold”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, sku_id = _seed_sku(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).patch(
@@ -166,11 +165,11 @@ def test_operator_can_update_product_sku_status_and_warning_threshold() -> None:
 def test_viewer_cannot_confirm_ad_experiment_status() -> None:
     """验证“viewercannotconfirm投放实验状态”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, experiment_id = _seed_ad_experiment(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.VIEWER)
     try:
         response = TestClient(app).patch(
@@ -187,11 +186,11 @@ def test_viewer_cannot_confirm_ad_experiment_status() -> None:
 def test_operator_can_confirm_ad_experiment_status() -> None:
     """验证“operatorcanconfirm投放实验状态”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, experiment_id = _seed_ad_experiment(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
     try:
         response = TestClient(app).patch(
@@ -248,25 +247,8 @@ def _seed_product_and_store(engine) -> tuple[int, int]:
         return product.id, store.id
 
 
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def override_db():
-        """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return override_db
-
-
 def _user(role: UserRole) -> User:
     """构造或执行测试所需的用户，让测试数据、依赖替身与断言保持集中。"""
     return User(id=1, email=f"{role}@example.com", display_name=str(role), role=role)
 
 
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )

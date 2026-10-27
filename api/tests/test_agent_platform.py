@@ -5,9 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.agents.platform_graph import PlatformWorkflowDependencies, build_platform_workflow_graph
 from app.agents.evaluation import load_platform_eval_cases
@@ -52,6 +50,8 @@ from app.services.agent_tasks import (
     cancel_agent_task,
     decide_agent_approval,
 )
+
+from support import make_engine, make_session_override
 
 
 def test_catalog_exposes_one_coordinator_eight_specialists_and_seven_workflows() -> None:
@@ -107,12 +107,12 @@ def test_policy_blocks_tool_outside_allowlist_and_requires_r3_owner() -> None:
 def test_workspace_task_api_writes_task_run_and_outbox_atomically(monkeypatch) -> None:
     """验证“Workspace任务apiwrites任务执行andOutboxatomically”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     monkeypatch.setattr(agent_platform, "kick_outbox_dispatcher", lambda: None)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -140,12 +140,12 @@ def test_workspace_task_api_writes_task_run_and_outbox_atomically(monkeypatch) -
 def test_workspace_task_api_rejects_cross_workspace_context(monkeypatch) -> None:
     """验证“Workspace任务apirejectscrossWorkspace上下文”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, _product_id, other_product_id = _seed(engine)
     monkeypatch.setattr(agent_platform, "kick_outbox_dispatcher", lambda: None)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -165,7 +165,7 @@ def test_workspace_task_api_rejects_cross_workspace_context(monkeypatch) -> None
 def test_workspace_can_disable_single_workflow(monkeypatch) -> None:
     """验证“Workspacecandisablesingle工作流”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -173,7 +173,7 @@ def test_workspace_can_disable_single_workflow(monkeypatch) -> None:
         workspace.settings = {"agent_workflow_flags": {"inventory_operations": False}}
         db.commit()
     monkeypatch.setattr(agent_platform, "kick_outbox_dispatcher", lambda: None)
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -193,7 +193,7 @@ def test_workspace_can_disable_single_workflow(monkeypatch) -> None:
 def test_maintenance_recovers_expired_worker_lease(monkeypatch) -> None:
     """验证“maintenancerecovers过期worker租约”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -253,7 +253,7 @@ def test_maintenance_recovers_expired_worker_lease(monkeypatch) -> None:
 def test_tool_gateway_is_workspace_scoped_and_idempotent(monkeypatch) -> None:
     """验证“工具gateway判断Workspacescopedandidempotent”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -314,7 +314,7 @@ def test_tool_gateway_is_workspace_scoped_and_idempotent(monkeypatch) -> None:
 def test_creative_workflow_persists_editable_business_artifacts_once(monkeypatch) -> None:
     """验证“创意工作流persistseditablebusinessartifactsonce”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -444,7 +444,7 @@ def test_quality_gate_blocks_finalize_when_report_fails() -> None:
 def test_duplicate_delivery_cannot_claim_running_run(monkeypatch) -> None:
     """验证“duplicatedeliverycannot认领running执行”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -467,7 +467,7 @@ def test_duplicate_delivery_cannot_claim_running_run(monkeypatch) -> None:
 def test_cancelled_task_closes_pending_approval_and_cannot_resume() -> None:
     """验证“cancelled任务closespending审批andcannotresume”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -515,7 +515,7 @@ def test_cancelled_task_closes_pending_approval_and_cannot_resume() -> None:
 def test_expired_approval_cannot_resume_workflow() -> None:
     """验证“过期审批cannotresume工作流”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -547,7 +547,7 @@ def test_expired_approval_cannot_resume_workflow() -> None:
         db.commit()
         approval_id = approval.id
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -571,7 +571,7 @@ def test_expired_approval_cannot_resume_workflow() -> None:
 def test_memory_context_honors_scope_and_effective_window() -> None:
     """验证“记忆上下文honors作用域and生效window”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, other_product_id = _seed(engine)
     now = datetime.now(UTC)
@@ -601,7 +601,7 @@ def test_memory_context_honors_scope_and_effective_window() -> None:
 def test_existing_workspace_rejects_user_without_membership() -> None:
     """验证“existingWorkspacerejects用户withoutmembership”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         workspace = Workspace(slug="private", name="私有团队")
@@ -609,7 +609,7 @@ def test_existing_workspace_rejects_user_without_membership() -> None:
         db.add_all([workspace, user])
         db.commit()
         user_id = user.id
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).get(
@@ -625,7 +625,7 @@ def test_existing_workspace_rejects_user_without_membership() -> None:
 def test_workspace_viewer_cannot_use_legacy_edit_endpoint() -> None:
     """验证“Workspaceviewercannotuselegacyedit端点”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     workspace_id, user_id, product_id, _other_product_id = _seed(engine)
     with Session(engine) as db:
@@ -635,7 +635,7 @@ def test_workspace_viewer_cannot_use_legacy_edit_endpoint() -> None:
         ).one()
         membership.role = UserRole.VIEWER
         db.commit()
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).patch(
@@ -757,16 +757,6 @@ def _seed(engine) -> tuple[int, int, int, int]:
         return workspace.id, user.id, product.id, other_product.id
 
 
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def override_db():
-        """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return override_db
-
-
 def _user(user_id: int, role: UserRole) -> User:
     """构造或执行测试所需的用户，让测试数据、依赖替身与断言保持集中。"""
     return User(
@@ -777,10 +767,3 @@ def _user(user_id: int, role: UserRole) -> User:
     )
 
 
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )

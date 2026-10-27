@@ -1,9 +1,7 @@
 from typing import Any
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.api.routes import agent_runs
 from app.agents.contracts import AgentDraftOutput, ReviewResumePayload
@@ -13,12 +11,13 @@ from app.main import app
 from app.models import AgentRun, AgentRunStatus, Base, Platform, Product, User, UserRole
 from app.models import AgentRunOperation, CreativePlan, ProductDiagnosis
 from app.services import agent_runs as agent_run_service
+from support import make_engine, make_session_override
 
 
 def test_operator_can_queue_agent_run(monkeypatch) -> None:
     """验证“operatorcan队列Agent执行”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, user_id = _seed_product_and_user(engine)
     dispatched: list[tuple[int, dict[str, Any] | None]] = []
@@ -28,7 +27,7 @@ def test_operator_can_queue_agent_run(monkeypatch) -> None:
         lambda run_id, payload=None: dispatched.append((run_id, payload)),
     )
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -47,12 +46,12 @@ def test_operator_can_queue_agent_run(monkeypatch) -> None:
 def test_product_rejects_second_active_agent_run(monkeypatch) -> None:
     """验证“商品rejectssecond有效Agent执行”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, user_id = _seed_product_and_user(engine)
     monkeypatch.setattr(agent_runs, "dispatch_agent_run", lambda *args, **kwargs: None)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         client = TestClient(app)
@@ -74,7 +73,7 @@ def test_product_rejects_second_active_agent_run(monkeypatch) -> None:
 def test_operator_can_resume_awaiting_review(monkeypatch) -> None:
     """验证“operatorcanresumeawaiting审核”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, user_id = _seed_product_and_user(engine)
     run_id = _seed_awaiting_review_run(engine, product_id, user_id)
@@ -85,7 +84,7 @@ def test_operator_can_resume_awaiting_review(monkeypatch) -> None:
         lambda current_run_id, payload=None: dispatched.append((current_run_id, payload)),
     )
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
     try:
         response = TestClient(app).post(
@@ -106,13 +105,13 @@ def test_operator_can_resume_awaiting_review(monkeypatch) -> None:
 def test_viewer_cannot_start_or_review_agent_run(monkeypatch) -> None:
     """验证“viewercannot启动or审核Agent执行”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, user_id = _seed_product_and_user(engine)
     run_id = _seed_awaiting_review_run(engine, product_id, user_id)
     monkeypatch.setattr(agent_runs, "dispatch_agent_run", lambda *args, **kwargs: None)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.VIEWER)
     try:
         client = TestClient(app)
@@ -135,7 +134,7 @@ def test_viewer_cannot_start_or_review_agent_run(monkeypatch) -> None:
 def test_finalize_operation_is_idempotent(monkeypatch) -> None:
     """验证“完成落库操作判断idempotent”场景，确保重构后仍满足预期业务与安全边界。"""
     # 按 Arrange、Act、Assert 组织场景，重点检查可观察状态和副作用。
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     product_id, user_id = _seed_product_and_user(engine)
     run_id = _seed_awaiting_review_run(engine, product_id, user_id)
@@ -210,16 +209,6 @@ def _seed_awaiting_review_run(engine, product_id: int, user_id: int) -> int:
         return run.id
 
 
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-    def override_db():
-        """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-        with Session(engine) as db:
-            yield db
-
-    return override_db
-
-
 def _user(user_id: int, role: UserRole) -> User:
     """构造或执行测试所需的用户，让测试数据、依赖替身与断言保持集中。"""
     return User(
@@ -227,15 +216,6 @@ def _user(user_id: int, role: UserRole) -> User:
         email=f"{role.value}@example.com",
         display_name=role.value,
         role=role,
-    )
-
-
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
 
 

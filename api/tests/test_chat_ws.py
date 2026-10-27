@@ -4,9 +4,7 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 from starlette.websockets import WebSocketDisconnect
 
 from app.api.routes import chat_ws
@@ -16,6 +14,7 @@ from app.main import app
 from app.models import Base, User, UserRole, Workspace, WorkspaceMembership
 from app.services.agent_tasks import AgentTaskStateError
 from app.services.auth import parse_access_token
+from support import make_engine, make_session_override
 
 
 def test_ws_ticket_requires_authentication() -> None:
@@ -28,11 +27,11 @@ def test_ws_ticket_requires_authentication() -> None:
 
 def test_ws_ticket_is_short_lived_and_purpose_bound() -> None:
     """验证“票据isshort时效and用途绑定”场景，确保 URL 里的票据既短效又只能连 WebSocket。"""
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     user_id = _seed_user(engine)
 
-    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_db] = make_session_override(engine)
     app.dependency_overrides[get_current_user] = lambda: _user(user_id)
     try:
         response = TestClient(app).post("/api/v1/chat/ws-ticket")
@@ -58,7 +57,7 @@ def test_ws_chat_rejects_invalid_ticket() -> None:
 
 def test_ws_chat_rejects_login_token_as_ticket() -> None:
     """验证“聊天rejects登录态as票据”场景，确保长时效登录态不能直接用于 WebSocket 连接。"""
-    engine = _engine()
+    engine = make_engine()
     Base.metadata.create_all(engine)
     user_id = _seed_user(engine)
     with Session(engine) as db:
@@ -195,15 +194,6 @@ def _login_token(user: User) -> str:
     return create_access_token(user)
 
 
-def _engine():
-    """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
-    return create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-
 def _seed_user(engine) -> int:
     """构造或执行测试所需的用户，让测试数据、依赖替身与断言保持集中。"""
     with Session(engine) as db:
@@ -220,16 +210,6 @@ def _seed_user(engine) -> int:
         )
         db.commit()
         return user.id
-
-
-def _override_db(engine):
-    """构造或执行测试所需的覆盖db，让测试数据、依赖替身与断言保持集中。"""
-
-    def override_db():
-        with Session(engine) as db:
-            yield db
-
-    return override_db
 
 
 def _user(user_id: int) -> User:
