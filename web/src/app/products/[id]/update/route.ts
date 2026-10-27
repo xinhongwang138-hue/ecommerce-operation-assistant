@@ -7,6 +7,7 @@ import { authHeaders } from "@/lib/session";
 const productUpdateSchema = z.object({
   name: z.string().min(1),
   platform: z.enum(["douyin", "taobao", "tmall", "pinduoduo", "jd", "tiktok_shop", "amazon", "other"]),
+  store_id: z.string().optional(),
   category: z.string().optional(),
   price: z.string().optional(),
   cost: z.string().optional(),
@@ -24,6 +25,7 @@ export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const formData = await request.formData();
   const values = productUpdateSchema.parse(Object.fromEntries(formData.entries()));
+  const storeId = parseStoreId(values.store_id);
   const response = await fetch(`${API_BASE_URL}/api/v1/products/${id}`, {
     method: "PATCH",
     headers: {
@@ -39,6 +41,8 @@ export async function POST(request: Request, context: RouteContext) {
       target_audience: emptyToNull(values.target_audience),
       selling_points: formLines(values.selling_points),
       product_url: emptyToNull(values.product_url),
+      // 留空时整个字段不发：后端 PATCH 用 exclude_unset，缺省即"归属不动"。
+      ...(storeId === null ? {} : { store_id: storeId }),
     }),
   });
 
@@ -52,6 +56,12 @@ export async function POST(request: Request, context: RouteContext) {
 /** 空状态到null，把不可信表单或 JSON 值转换为页面逻辑可安全使用的类型。 */
 function emptyToNull(value?: string): string | null {
   return value && value.trim() ? value.trim() : null;
+}
+
+/** 解析表单里的店铺 id；空值或非正整数都当成"不改动归属"。 */
+function parseStoreId(value?: string): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 /** 表单lines，把不可信表单或 JSON 值转换为页面逻辑可安全使用的类型。 */

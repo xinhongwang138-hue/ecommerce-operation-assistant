@@ -14,6 +14,7 @@ import { notFound } from "next/navigation";
 
 import { InventoryAdvicePanel } from "@/components/inventory-advice-panel";
 import {
+  API_BASE_URL,
   getCurrentUser,
   getProducts,
   getStore,
@@ -23,7 +24,7 @@ import {
 } from "@/lib/api";
 import { getAuthToken } from "@/lib/session";
 import type { StoreInventoryMovementRow, StoreInventoryRow } from "@/types";
-import type { Platform, Product } from "@/types";
+import type { Platform, Product, StoreStatus } from "@/types";
 
 const platformLabels: Record<Platform, string> = {
   douyin: "抖音",
@@ -38,7 +39,23 @@ const platformLabels: Record<Platform, string> = {
 
 type StorePageProps = {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ inventory?: string }>;
+  searchParams?: Promise<{ inventory?: string; storeError?: string; storeStatus?: string }>;
+};
+
+/** 店铺状态标签：closed 是系统里的"软删除"语义，关店后业务数据全部保留。 */
+const STORE_STATUS_LABELS: Record<StoreStatus, string> = {
+  active: "启用",
+  paused: "暂停",
+  closed: "关闭",
+};
+
+const STORE_ERROR_MESSAGES: Record<string, string> = {
+  invalid: "未知的店铺状态，未做任何修改。",
+  forbidden: "没有权限：改状态需要店铺编辑权限，删除需要该工作区 owner。",
+  notfound: "店铺不存在，或不属于当前工作区。",
+  has_products: "该店铺下仍有商品，删除被拒绝。请到商品编辑页把商品转移到其他店铺，再删店铺；只想停售就用上面的「关店」。",
+  confirm_required: "请先勾选确认，再执行删除。",
+  failed: "操作失败，请稍后重试。",
 };
 
 /** 渲染stores页面；在服务端加载业务数据，并把交互交给对应表单或客户端组件。 */
@@ -62,7 +79,7 @@ export default async function StorePage({ params, searchParams }: StorePageProps
             <AlertTriangle className="mx-auto h-8 w-8 text-[var(--danger)]" aria-hidden="true" />
             <h1 className="mt-3 text-lg font-semibold text-[var(--foreground)]">后端服务暂时不可用</h1>
             <p className="mt-2 text-sm text-[var(--muted-foreground)]">
-              店铺数据请求已超时中止（默认 4 秒），无法确认该店铺信息。请确认 8020 后端已启动后重试。
+              {`店铺数据请求已超时中止（默认 4 秒），无法确认该店铺信息。请确认后端服务（${API_BASE_URL}）已启动后重试。`}
             </p>
             <div className="mt-4 flex justify-center gap-3">
               <a href={`/stores/${id}`} className="btn-primary h-9 px-4 text-sm">
@@ -88,6 +105,14 @@ export default async function StorePage({ params, searchParams }: StorePageProps
   const currentUser = token ? await getCurrentUser(token) : null;
   const canEdit = Boolean(currentUser?.permissions.can_edit);
 
+  // 结果提示来自 update/delete 路由的重定向参数；只按固定码查表，不回显后端原文，
+  // 避免把上游错误信息透成页面内容。
+  const storeNotice = query.storeError
+    ? { tone: "error" as const, text: STORE_ERROR_MESSAGES[query.storeError] ?? STORE_ERROR_MESSAGES.failed }
+    : query.storeStatus && query.storeStatus in STORE_STATUS_LABELS
+      ? { tone: "ok" as const, text: `店铺状态已更新为「${STORE_STATUS_LABELS[query.storeStatus as StoreStatus]}」。` }
+      : null;
+
   return (
     <main className="flex flex-col gap-6">
       <div className="flex flex-col gap-6">
@@ -105,9 +130,7 @@ export default async function StorePage({ params, searchParams }: StorePageProps
                 </p>
               </div>
             </div>
-            <span className="badge-gradient badge-muted">
-              {store.status === "active" ? "启用" : store.status === "paused" ? "暂停" : "关闭"}
-            </span>
+            <span className="badge-gradient badge-muted">{STORE_STATUS_LABELS[store.status]}</span>
           </div>
         </header>
 
@@ -116,6 +139,66 @@ export default async function StorePage({ params, searchParams }: StorePageProps
           <MetricCard label="在营商品" value={activeProducts} icon={Boxes} />
           <MetricCard label="待补平台映射" value={unmappedProducts} icon={ArrowRight} />
           <MetricCard label="可用库存" value={inventorySummary?.total_available_quantity ?? 0} icon={Warehouse} />
+        </section>
+
+        {storeNotice ? (
+          <div
+            className={`rounded-md border px-4 py-3 text-sm ${
+              storeNotice.tone === "error"
+                ? "border-[var(--danger)]/30 bg-[var(--danger-soft)] text-[var(--danger)]"
+                : "border-[var(--success)]/30 bg-[var(--success-soft)] text-[var(--success)]"
+            }`}
+            role="status"
+          >
+            {storeNotice.text}
+          </div>
+        ) : null}
+
+        <section className="card p-5">
+          <h2 className="text-sm font-semibold text-[var(--foreground)]">店铺状态与删除</h2>
+          <div className="mt-4 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <form action={`/stores/${store.id}/update`} method="post" className="flex items-end gap-2">
+              <label className="block">
+                <span className="mb-1 block text-xs text-[var(--muted-foreground)]">店铺状态</span>
+                <select
+                  name="status"
+                  defaultValue={store.status}
+                  disabled={!canEdit}
+                  className="input h-9 w-32 rounded-[10px] px-2 text-sm disabled:opacity-50"
+                >
+                  {(Object.keys(STORE_STATUS_LABELS) as StoreStatus[]).map((value) => (
+                    <option key={value} value={value}>
+                      {STORE_STATUS_LABELS[value]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="btn-primary h-9 px-4 text-sm" disabled={!canEdit}>
+                保存状态
+              </button>
+            </form>
+
+            <form action={`/stores/${store.id}/delete`} method="post" className="flex flex-col items-start gap-2">
+              <label className="flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+                <input type="checkbox" name="confirm" value="yes" className="h-4 w-4 rounded" required />
+                我确认永久删除该店铺及其平台账号
+              </label>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[var(--muted-foreground)]">
+                  {storeProducts.length > 0
+                    ? `该店铺下有 ${storeProducts.length} 个商品，需先把商品转移到其他店铺才能删店`
+                    : "删除不可恢复；只是暂时不用可改为「关闭」"}
+                </span>
+                <button
+                  type="submit"
+                  className="h-9 rounded-[10px] border border-[var(--danger)]/30 px-4 text-sm font-medium text-[var(--danger)] transition hover:bg-[var(--danger-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!canEdit || storeProducts.length > 0}
+                >
+                  删除店铺
+                </button>
+              </div>
+            </form>
+          </div>
         </section>
 
         <StoreWorkflowPanel steps={workflowSteps} />

@@ -1,6 +1,6 @@
 import { Save } from "lucide-react";
 
-import type { ProductDetail } from "@/types";
+import type { ProductDetail, Store } from "@/types";
 
 const platforms = [
   { label: "抖音电商", value: "douyin" },
@@ -16,10 +16,11 @@ const platforms = [
 type ProductEditFormProps = {
   canEdit?: boolean;
   product: ProductDetail;
+  stores: Store[];
 };
 
 /** 渲染 ProductEditForm 组件，集中展示商品编辑表单所需的数据、状态和操作入口。 */
-export function ProductEditForm({ canEdit = true, product }: ProductEditFormProps) {
+export function ProductEditForm({ canEdit = true, product, stores }: ProductEditFormProps) {
   return (
     <form action={`/products/${product.id}/update`} method="post" className="space-y-4">
       <div>
@@ -36,6 +37,27 @@ export function ProductEditForm({ canEdit = true, product }: ProductEditFormProp
           className="mt-2 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
         />
       </label>
+
+      {stores.length > 0 ? (
+        <label className="block">
+          <span className="text-sm font-medium text-slate-700">所属店铺</span>
+          <select
+            name="store_id"
+            defaultValue={product.store_id ?? ""}
+            className="mt-2 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+          >
+            {product.store_id == null ? <option value="">未归属店铺</option> : null}
+            {stores.map((store) => (
+              <option key={store.id} value={store.id}>
+                {store.name}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-500">
+            换店铺会把该商品连同 SKU、库存一起挪过去；要删掉某个店铺，先把它下面的商品挪走。
+          </p>
+        </label>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">

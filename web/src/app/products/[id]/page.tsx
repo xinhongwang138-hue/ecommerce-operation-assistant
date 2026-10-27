@@ -204,7 +204,7 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
         <section className="grid gap-6 lg:grid-cols-[420px_1fr]">
           <div className="grid gap-6">
             <div className="rounded-md border border-slate-200 bg-white p-6">
-              <ProductEditForm product={product} canEdit={canEdit} />
+              <ProductEditForm product={product} canEdit={canEdit} stores={stores} />
             </div>
             <div className="rounded-md border border-slate-200 bg-white p-6">
               <SkuCreateForm productId={product.id} canEdit={canEdit} />

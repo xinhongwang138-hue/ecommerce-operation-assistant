@@ -2,13 +2,28 @@ from datetime import datetime, timezone
 from secrets import token_urlsafe
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.routes.auth import require_edit_permission, require_view_permission, workspace_scope
+from app.api.routes.auth import (
+    require_edit_permission,
+    require_view_permission,
+    require_workspace_owner_permission,
+    workspace_scope,
+)
 from app.db.session import get_db
-from app.models import InventoryItem, InventoryMovement, PlatformAccount, PlatformAccountStatus, Product, ProductSku, Store, User
+from app.models import (
+    InventoryItem,
+    InventoryMovement,
+    PlatformAccount,
+    PlatformAccountStatus,
+    PlatformProductMapping,
+    Product,
+    ProductSku,
+    Store,
+    User,
+)
 from app.schemas import (
     PlatformAccountCreate,
     PlatformAccountRead,
@@ -26,9 +41,11 @@ from app.schemas import (
 
 
 from app.services.inventory_advice import generate_inventory_advice
+from app.services.workspaces import WorkspaceAccess
 
 router = APIRouter(prefix="/stores", tags=["stores"])
 SessionDep = Annotated[Session, Depends(get_db)]
+WorkspaceOwnerDep = Annotated[WorkspaceAccess, Depends(require_workspace_owner_permission)]
 
 
 def get_store_or_404(db: Session, store_id: int) -> Store:
@@ -232,6 +249,47 @@ def update_store(
     db.commit()
     db.refresh(store)
     return store
+
+
+@router.delete("/{store_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_store(
+    store_id: int,
+    db: SessionDep,
+    _access: WorkspaceOwnerDep,
+) -> Response:
+    """彻底删除一家店铺。
+
+    权限用工作区 owner（不是全局 owner）：店铺本来就属于某个租户，租户自己的 owner
+    应当能管理它。
+
+    归属校验刻意不复用 get_store_or_404：它依赖 workspace_scope(db)，而
+    get_current_workspace 走的是 resolve_workspace_access，不会把 workspace 绑进
+    db.info，复用会一律撞成 403。这里直接比对依赖已解析出的 access.workspace.id，
+    比 workspace_scope 更严——后者在库内无租户数据时会返回 None 即不过滤。
+
+    刻意不做级联软删：Product 往下还挂着业绩、竞品与监控、诊断、复盘、投放实验、素材、
+    短链及点击、Agent 运行等 17 张表的业务数据，且这些外键都没有声明 ondelete 级联。
+    一旦连带删除就是不可再生的运营数据损失，所以有商品时直接拒绝，让调用方先处理商品。
+    """
+    store = db.get(Store, store_id)
+    if store is None or store.workspace_id != _access.workspace.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store not found")
+
+    product_count = int(db.scalar(select(func.count(Product.id)).where(Product.store_id == store.id)) or 0)
+    if product_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"店铺下仍有 {product_count} 个商品，请先把商品转移到其他店铺后再删店；只想停售可以改状态关店。",
+        )
+
+    # 平台账号与铺品映射是店铺维度的配置而非业务记录，随店一起清掉。
+    # 映射理论上应随商品为空，但历史脏数据仍可能残留，显式删以免触发外键违例。
+    db.query(PlatformProductMapping).filter(PlatformProductMapping.store_id == store.id).delete()
+    for account in list(store.platform_accounts):
+        db.delete(account)
+    db.delete(store)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

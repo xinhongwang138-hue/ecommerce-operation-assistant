@@ -26,11 +26,14 @@ export type Product = {
   updated_at: string;
 };
 
+/** 店铺状态：closed 是系统里的"软删除"语义，关店后业务数据全部保留。 */
+export type StoreStatus = "active" | "paused" | "closed";
+
 export type Store = {
   id: number;
   name: string;
   platform: Platform;
-  status: "active" | "paused" | "closed";
+  status: StoreStatus;
   external_store_id: string | null;
   owner_name: string | null;
   note: string | null;
