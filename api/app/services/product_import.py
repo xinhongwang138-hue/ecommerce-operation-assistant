@@ -1,13 +1,12 @@
-import csv
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from io import StringIO
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Platform, Product, Store
 from app.schemas import ProductImportRowResult
+from app.services.csv_import import read_csv_rows
 
 
 @dataclass
@@ -32,7 +31,7 @@ def preview_product_import(csv_text: str) -> tuple[list[ParsedProductRow], list[
     results: list[ProductImportRowResult] = []
 
     # 预览阶段只做校验和标准化，不写数据库，给运营确认导入结果的机会。
-    for row_number, row in _read_csv_rows(csv_text):
+    for row_number, row in read_csv_rows(csv_text):
         parsed, errors = _parse_row(row_number, row)
         if errors:
             results.append(
@@ -95,17 +94,6 @@ def import_products(db: Session, csv_text: str) -> list[ProductImportRowResult]:
     db.commit()
     return results
 
-
-def _read_csv_rows(csv_text: str) -> list[tuple[int, dict[str, str]]]:
-    """读取csv行，统一主流程中的格式、默认值和异常边界。"""
-    # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
-    reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
-    rows: list[tuple[int, dict[str, str]]] = []
-    for index, row in enumerate(reader, start=2):
-        if not row or not any((value or "").strip() for value in row.values()):
-            continue
-        rows.append((index, {str(key or "").strip(): (value or "").strip() for key, value in row.items()}))
-    return rows
 
 
 def _parse_row(row_number: int, row: dict[str, str]) -> tuple[ParsedProductRow | None, list[str]]:

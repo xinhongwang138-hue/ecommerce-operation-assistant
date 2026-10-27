@@ -1,14 +1,13 @@
-import csv
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from io import StringIO
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AdExperiment, CreativePlan, GeneratedAsset, PerformanceRecord, Product, PromotionLink
 from app.schemas import PerformanceImportRowResult
+from app.services.csv_import import read_csv_rows
 from app.services.review import enrich_performance_metrics
 
 
@@ -92,7 +91,7 @@ def preview_performance_import(
     results: list[PerformanceImportRowResult] = []
 
     # 经营数据导入先预览校验，确保实验、素材、链接归属正确后再真正入库。
-    for row_number, row in _read_csv_rows(csv_text):
+    for row_number, row in read_csv_rows(csv_text, HEADER_ALIASES):
         parsed, errors, product_name, period_start, period_end = _parse_row(db, row_number, row)
         if errors:
             results.append(
@@ -162,22 +161,6 @@ def import_performance_records(db: Session, csv_text: str) -> list[PerformanceIm
 
     db.commit()
     return results
-
-
-def _read_csv_rows(csv_text: str) -> list[tuple[int, dict[str, str]]]:
-    """读取csv行，统一主流程中的格式、默认值和异常边界。"""
-    # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
-    reader = csv.DictReader(StringIO(csv_text.lstrip("\ufeff")))
-    rows: list[tuple[int, dict[str, str]]] = []
-    for index, raw_row in enumerate(reader, start=2):
-        if not raw_row or not any((value or "").strip() for value in raw_row.values()):
-            continue
-        normalized = {
-            HEADER_ALIASES.get(str(key or "").strip(), str(key or "").strip()): (value or "").strip()
-            for key, value in raw_row.items()
-        }
-        rows.append((index, normalized))
-    return rows
 
 
 def _parse_row(
