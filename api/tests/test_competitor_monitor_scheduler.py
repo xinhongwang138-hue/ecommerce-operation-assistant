@@ -9,7 +9,19 @@ from sqlalchemy.pool import StaticPool
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
 from app.main import app
-from app.models import Base, Competitor, CompetitorMonitor, CompetitorMonitorSnapshot, Platform, Product, User, UserRole
+from app.models import (
+    Base,
+    Competitor,
+    CompetitorMonitor,
+    CompetitorMonitorSnapshot,
+    Platform,
+    Product,
+    User,
+    UserRole,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceStatus,
+)
 from app.services.link_extraction import LinkProfile
 
 
@@ -80,6 +92,94 @@ def test_run_due_competitor_monitors_consumes_due_monitors(monkeypatch) -> None:
         assert due_monitor.next_check_at is not None
         assert due_monitor.next_check_at > due_monitor.last_checked_at
         assert future_monitor.last_checked_at is None
+
+
+def test_run_due_competitor_monitors_scopes_to_current_workspace(monkeypatch) -> None:
+    """跨租户护栏：手动触发调度只能执行并回显当前 workspace 的到期监控。
+
+    回归审计时新发现的 IDOR。CompetitorMonitor 自身没有 workspace_id，服务层原先只按
+    status/next_check_at 取行，于是任一租户触发都会跑掉并回显他租户的监控与错误文本。
+    """
+    engine = _engine()
+    Base.metadata.create_all(engine)
+    workspace_a, workspace_b = _seed_two_workspaces(engine)
+    due = datetime.now(UTC) - timedelta(minutes=5)
+    monitor_a = _seed_monitor_in_workspace(engine, workspace_a, due)
+    monitor_b = _seed_monitor_in_workspace(engine, workspace_b, due)
+
+    def fake_fetch_profile(url: str) -> LinkProfile:
+        """构造或执行测试所需的fake获取资料，让测试数据、依赖替身与断言保持集中。"""
+        return LinkProfile(
+            name="竞品新标题",
+            title="竞品新标题",
+            price=Decimal("21.90"),
+            sales_hint="月销 2 万+",
+            main_image="https://example.com/new.png",
+            selling_points=["低糖"],
+        )
+
+    monkeypatch.setattr("app.services.competitor_monitoring.fetch_competitor_profile", fake_fetch_profile)
+
+    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_current_user] = lambda: _user(UserRole.OPERATOR)
+    try:
+        response = TestClient(app).post(
+            "/api/v1/workspace/competitor-monitors/run-due",
+            headers={"Authorization": "Bearer test", "X-Workspace-ID": str(workspace_a)},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    # 只回显 A 的监控；B 的既不该被跑掉，也不该出现在返回里。
+    assert payload["monitor_ids"] == [monitor_a]
+
+    with Session(engine) as db:
+        assert db.get(CompetitorMonitor, monitor_b).last_checked_at is None
+        assert db.query(CompetitorMonitorSnapshot).count() == 1
+
+
+def _seed_two_workspaces(engine) -> tuple[int, int]:
+    """建两个 workspace 并让测试用户同时是二者成员，确保拦截只可能源自租户边界。"""
+    with Session(engine) as db:
+        user = db.get(User, 1) or User(id=1, email="op@example.com", display_name="op", role=UserRole.OPERATOR)
+        workspace_a = Workspace(slug="tenant-a", name="租户 A", status=WorkspaceStatus.ACTIVE)
+        workspace_b = Workspace(slug="tenant-b", name="租户 B", status=WorkspaceStatus.ACTIVE)
+        db.add_all([user, workspace_a, workspace_b])
+        db.flush()
+        db.add_all(
+            [
+                WorkspaceMembership(workspace_id=workspace_a.id, user_id=user.id, role=UserRole.OPERATOR),
+                WorkspaceMembership(workspace_id=workspace_b.id, user_id=user.id, role=UserRole.OPERATOR),
+            ]
+        )
+        db.commit()
+        return workspace_a.id, workspace_b.id
+
+
+def _seed_monitor_in_workspace(engine, workspace_id: int, next_check_at: datetime) -> int:
+    """在指定 workspace 下建商品、竞品与到期监控，返回监控主键。"""
+    with Session(engine) as db:
+        product = Product(name="低糖燕麦饼干", platform=Platform.DOUYIN, workspace_id=workspace_id)
+        competitor = Competitor(
+            product=product,
+            name="竞品饼干",
+            platform=Platform.DOUYIN,
+            url="https://example.com/item/1",
+        )
+        db.add_all([product, competitor])
+        db.flush()
+        monitor = CompetitorMonitor(
+            product_id=product.id,
+            competitor_id=competitor.id,
+            interval_days=1,
+            status="active",
+            next_check_at=next_check_at,
+        )
+        db.add(monitor)
+        db.commit()
+        return monitor.id
 
 
 def _seed_due_monitor(engine) -> int:

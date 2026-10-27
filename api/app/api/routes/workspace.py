@@ -6,7 +6,7 @@ from fastapi import HTTPException, APIRouter, Depends, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.routes.auth import require_edit_permission
+from app.api.routes.auth import require_edit_permission, workspace_scope
 from app.db.session import get_db
 from app.models import (
     AdExperiment,
@@ -199,7 +199,8 @@ def run_due_competitor_monitor_tasks(
 ) -> CompetitorMonitorSchedulerRunResult:
     # 手动触发调度只处理到期监控，不创建新的采集规则或扩大抓取范围。
     """处理执行到期竞品监控tasks接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
-    return run_due_competitor_monitors(db, limit=limit)
+    # 手动触发只跑当前 workspace 的到期监控；全量 sweep 属于系统级调度，不能暴露给租户侧接口。
+    return run_due_competitor_monitors(db, limit=limit, workspace_id=workspace_scope(db))
 
 
 @router.post("/generation-jobs/sweep-timeouts", response_model=GenerationJobTimeoutSweepResult)

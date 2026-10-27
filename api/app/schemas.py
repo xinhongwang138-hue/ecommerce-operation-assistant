@@ -989,7 +989,7 @@ def _bounded_agent_json(value: dict[str, Any], *, max_bytes: int = 64 * 1024) ->
 
 class ProductImportRequest(BaseModel):
     # commit=false 是导入预览，commit=true 才写库，保留运营人工确认导入的边界。
-    csv_text: str = Field(min_length=1)
+    csv_text: str = Field(min_length=1, max_length=200_000)
     commit: bool = False
 
 
@@ -1013,7 +1013,7 @@ class ProductImportResult(BaseModel):
 
 
 class SkuInventoryImportRequest(BaseModel):
-    csv_text: str = Field(min_length=1)
+    csv_text: str = Field(min_length=1, max_length=200_000)
     commit: bool = False
 
 
@@ -1039,7 +1039,7 @@ class SkuInventoryImportResult(BaseModel):
 
 class PerformanceImportRequest(BaseModel):
     # 经营数据导入会影响投放复盘和实验统计，因此同样采用预览/提交两阶段。
-    csv_text: str = Field(min_length=1)
+    csv_text: str = Field(min_length=1, max_length=200_000)
     commit: bool = False
 
 

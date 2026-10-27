@@ -42,8 +42,11 @@ def get_store_or_404(db: Session, store_id: int) -> Store:
 
 def get_platform_account_or_404(db: Session, store_id: int, account_id: int) -> PlatformAccount:
     """处理获取平台账号or404接口；完成身份、Workspace、资源归属和输入校验后返回结构化结果。"""
+    # 必须先过 get_store_or_404：它带 workspace_scope 过滤。只校验 account.store_id 父子归属
+    # 是不够的——那样任一租户都能拿到别租户店铺下的账号行，且父子关系天然成立。
+    store = get_store_or_404(db, store_id)
     account = db.get(PlatformAccount, account_id)
-    if account is None or account.store_id != store_id:
+    if account is None or account.store_id != store.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Platform account not found")
     return account
 

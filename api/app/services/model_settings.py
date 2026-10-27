@@ -255,12 +255,14 @@ def _set_secret_if_present(row: ModelProviderSetting, payload: dict) -> None:
 
 
 def _mask_secret(value: str | None) -> str:
-    """脱敏密钥，统一主流程中的格式、默认值和异常边界。"""
-    # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
+    """脱敏密钥：只保留末 4 位供人工辨认"配的是哪把"，前缀一律不回传。
+
+    旧实现对 >16 字符的密钥保留前 7 + 后 6，等于把 13 个明文字符交给读取方；
+    配置表是全局的、GET 又只对 edit 权限开放，这 13 位会被所有租户的 operator 持有。
+    前端判断"是否已配置"走 has_api_key，不依赖这里的字符量。
+    """
     if not value:
         return ""
-    if len(value) <= 6:
+    if len(value) <= 8:
         return "******"
-    if len(value) <= 16:
-        return f"{value[:3]}...{value[-3:]}"
-    return f"{value[:7]}...{value[-6:]}"
+    return f"******{value[-4:]}"

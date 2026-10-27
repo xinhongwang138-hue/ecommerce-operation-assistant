@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import CompetitorMonitor
+from app.models import CompetitorMonitor, Product
 from app.schemas import CompetitorMonitorSchedulerRunResult
 from app.services.competitor_monitoring import run_competitor_monitor
 
@@ -13,6 +13,7 @@ def run_due_competitor_monitors(
     *,
     limit: int = 20,
     now: datetime | None = None,
+    workspace_id: int | None = None,
 ) -> CompetitorMonitorSchedulerRunResult:
     """执行到期竞品monitors；集中执行业务校验、状态变更与持久化，并返回可验证结果。"""
     # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
@@ -29,6 +30,12 @@ def run_due_competitor_monitors(
         .order_by(CompetitorMonitor.next_check_at.asc(), CompetitorMonitor.id.asc())
         .limit(limit)
     )
+    # CompetitorMonitor 自身没有 workspace_id，只能经 product 收敛租户范围。
+    # HTTP 手动触发必须传 workspace_id；不传=全量，仅供 Celery beat 这类系统级调用使用。
+    if workspace_id is not None:
+        statement = statement.join(Product, Product.id == CompetitorMonitor.product_id).where(
+            Product.workspace_id == workspace_id
+        )
     monitors = list(db.scalars(statement).all())
     result = CompetitorMonitorSchedulerRunResult(
         checked_count=0,

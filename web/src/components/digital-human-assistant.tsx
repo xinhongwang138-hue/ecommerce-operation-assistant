@@ -191,6 +191,13 @@ export function DigitalHumanAssistant({ workspaceId, products, stores }: Digital
     let credentials: AvatarCredentials;
     try {
       const response = await fetch("/api/digital-human/credentials", { cache: "no-store" });
+      if (response.status === 403) {
+        // 凭证接口只放行全局 owner（判的是 user.role，不是 workspace 成员角色）：
+        // 它下发的是全平台共用的供应商密钥，直接对应账号计费时长。
+        setAvatarPhase("error");
+        setAvatarError("当前账号无权获取数字人凭证：该密钥全平台共用一把并计入账号时长，仅平台 owner 可领取。");
+        return;
+      }
       if (!response.ok) throw new Error(`credentials ${response.status}`);
       credentials = (await response.json()) as AvatarCredentials;
     } catch {

@@ -78,6 +78,26 @@ def test_credentials_returns_configured_values(monkeypatch) -> None:
     assert response.json()["gateway_server"] == "https://gateway.example.com/session"
 
 
+def test_credentials_rejects_non_owner() -> None:
+    """全局供应商密钥只对 workspace owner 开放。
+
+    这把 appSecret 存在后端 .env 里、不区分租户，且直接对应账号的计费时长；
+    原先 edit 权限即可领取，等于每个租户的 operator 都持有同一把全局密钥。
+    """
+    engine = _engine()
+    Base.metadata.create_all(engine)
+    user_id = _seed_user(engine, UserRole.OPERATOR)
+
+    app.dependency_overrides[get_db] = _override_db(engine)
+    app.dependency_overrides[get_current_user] = lambda: _user(user_id, UserRole.OPERATOR)
+    try:
+        response = TestClient(app).get("/api/v1/digital-human/credentials")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
+
+
 def _engine():
     """构造或执行测试所需的engine，让测试数据、依赖替身与断言保持集中。"""
     return create_engine(
@@ -87,18 +107,18 @@ def _engine():
     )
 
 
-def _seed_user(engine) -> int:
+def _seed_user(engine, role: UserRole = UserRole.OWNER) -> int:
     """构造或执行测试所需的用户，让测试数据、依赖替身与断言保持集中。"""
     with Session(engine) as db:
         workspace = Workspace(slug="team-a", name="团队 A")
-        user = User(email="operator@example.com", display_name="Operator", role=UserRole.OPERATOR)
+        user = User(email=f"{role.value}@example.com", display_name=role.value, role=role)
         db.add_all([workspace, user])
         db.flush()
         db.add(
             WorkspaceMembership(
                 workspace_id=workspace.id,
                 user_id=user.id,
-                role=UserRole.OPERATOR,
+                role=role,
             )
         )
         db.commit()
@@ -115,6 +135,6 @@ def _override_db(engine):
     return override_db
 
 
-def _user(user_id: int) -> User:
+def _user(user_id: int, role: UserRole = UserRole.OWNER) -> User:
     """构造或执行测试所需的用户，让测试数据、依赖替身与断言保持集中。"""
-    return User(id=user_id, email="operator@example.com", display_name="Operator", role=UserRole.OPERATOR)
+    return User(id=user_id, email=f"{role.value}@example.com", display_name=role.value, role=role)

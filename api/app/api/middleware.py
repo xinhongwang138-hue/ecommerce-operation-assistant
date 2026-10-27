@@ -9,6 +9,7 @@ import time
 from collections import deque
 from threading import Lock
 
+from starlette.datastructures import Headers
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -27,15 +28,40 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class BodySizeLimitMiddleware(BaseHTTPMiddleware):
-    """按 Content-Length 拒绝超大请求体，先于 JSON 解析，避免超大 base64 撑爆内存。"""
+class BodySizeLimitMiddleware:
+    """按实际读取字节数封顶请求体。
 
-    async def dispatch(self, request, call_next):
-        settings = get_settings()
-        content_length = request.headers.get("content-length")
-        if content_length and content_length.isdigit() and int(content_length) > settings.max_request_bytes:
-            return JSONResponse({"detail": "Request entity too large"}, status_code=413)
-        return await call_next(request)
+    只查 Content-Length 会被 chunked 请求绕过：没有该头时判断直接落空，而 Starlette
+    仍会把整个请求体读进内存才交给 Pydantic 校验。这里对 body 分片累加计数，超限即把
+    消息替换为 http.disconnect 终止读取（宁可让这次请求失败，也不能让它把内存吃穿）。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        limit = get_settings().max_request_bytes
+        declared = Headers(scope=scope).get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > limit:
+            await JSONResponse({"detail": "Request entity too large"}, status_code=413)(scope, receive, send)
+            return
+
+        consumed = 0
+
+        async def counting_receive():
+            nonlocal consumed
+            message = await receive()
+            if message["type"] == "http.request":
+                consumed += len(message.get("body", b""))
+                if consumed > limit:
+                    return {"type": "http.disconnect"}
+            return message
+
+        await self.app(scope, counting_receive, send)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
