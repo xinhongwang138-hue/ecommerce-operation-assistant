@@ -15,6 +15,7 @@ from app.schemas import AuthTokenRead, LoginRequest, UserRead
 from app.services.auth import AuthTokenError, create_access_token, ensure_user_can_login, parse_access_token
 from app.services.token_store import is_token_revoked, revoke_token
 from app.services.users import hash_password, user_to_read, verify_password
+from app.services.spend_quota import current_workspace_id
 from app.services.workspaces import WorkspaceAccess, WorkspaceAccessError, resolve_workspace_access
 
 
@@ -229,12 +230,15 @@ def _bind_workspace_to_session(
                 detail="Workspace membership not found or inactive",
             )
         db.info["workspace_id"] = None
+        current_workspace_id.set(None)
         return None
     try:
         access = resolve_workspace_access(db, user=current_user, workspace_id=workspace_id)
     except WorkspaceAccessError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     db.info["workspace_id"] = access.workspace.id
+    # 同步给花费配额用：服务层拿不到 db/session，只能靠 contextvar 归属到当前租户。
+    current_workspace_id.set(access.workspace.id)
     return access
 
 

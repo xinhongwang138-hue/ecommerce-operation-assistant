@@ -5,6 +5,7 @@ import httpx
 
 from app.core.config import Settings
 from app.services.model_settings import get_runtime_settings
+from app.services.spend_quota import charge_llm_call
 
 
 class LLMNotConfiguredError(RuntimeError):
@@ -61,6 +62,9 @@ def _post_chat_completion(
 ) -> dict[str, Any]:
     """发送对话模型补全，统一主流程中的格式、默认值和异常边界。"""
     # 按“输入归一化 → 业务校验 → 状态或持久化”推进，异常不得留下半完成结果。
+    # 记账放在真正外呼之前：这是唯一能同时覆盖 HTTP 请求与 Celery 后台任务的位置。
+    charge_llm_call()
+
     url = _chat_completion_url(settings.llm_base_url or "")
     payload: dict[str, Any] = {
         "model": settings.llm_model,

@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     login_max_attempts: int = Field(default=8, alias="LOGIN_MAX_ATTEMPTS")
     login_lockout_seconds: int = Field(default=300, alias="LOGIN_LOCKOUT_SECONDS")
     max_request_bytes: int = Field(default=16 * 1024 * 1024, alias="MAX_REQUEST_BYTES")
+    # 花费配额：LLM 与 OCR 共用一个桶（OCR 默认复用 LLM 那把钥匙）。0 表示不限制。
+    # 与上面的限流是两回事——限流按客户端 IP 且开发环境默认关闭，挡不住跨租户盗刷；
+    # 配额守在真正产生费用的外呼出口，请求路径与 Celery 后台任务都会被计入。
+    llm_daily_calls_per_workspace: int = Field(default=300, alias="LLM_DAILY_CALLS_PER_WORKSPACE")
+    llm_daily_calls_total: int = Field(default=1000, alias="LLM_DAILY_CALLS_TOTAL")
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, alias="LLM_MODEL")

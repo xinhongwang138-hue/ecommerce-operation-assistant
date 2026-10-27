@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import Settings, get_settings
+from app.services.spend_quota import charge_llm_call
 
 
 # 只放行浏览器能直接预览、且 DashScope 视觉接口稳定支持的格式，避免把任意二进制塞给模型。
@@ -127,6 +128,9 @@ def _post_ocr(
     mime_type: str,
     prompt: str,
 ) -> dict[str, Any]:
+    # OCR 默认复用 LLM 那把钥匙，所以与 LLM 共用同一个配额桶计费记账。
+    charge_llm_call()
+
     payload = {
         "model": settings.ocr_model,
         "messages": [
