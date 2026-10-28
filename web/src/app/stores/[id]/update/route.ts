@@ -32,6 +32,10 @@ export async function POST(request: Request, context: RouteContext) {
   if (response.status === 403) {
     redirect(`/stores/${id}?storeError=forbidden`);
   }
+  if (response.status === 404) {
+    // 详情页对不存在的店铺直接 notFound()，提示只能落在首页。
+    redirect("/?storeResult=notfound");
+  }
   if (!response.ok) {
     redirect(`/stores/${id}?storeError=failed`);
   }

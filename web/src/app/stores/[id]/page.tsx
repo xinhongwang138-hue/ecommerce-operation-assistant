@@ -52,7 +52,6 @@ const STORE_STATUS_LABELS: Record<StoreStatus, string> = {
 const STORE_ERROR_MESSAGES: Record<string, string> = {
   invalid: "未知的店铺状态，未做任何修改。",
   forbidden: "没有权限：改状态需要店铺编辑权限，删除需要该工作区 owner。",
-  notfound: "店铺不存在，或不属于当前工作区。",
   has_products: "该店铺下仍有商品，删除被拒绝。请到商品编辑页把商品转移到其他店铺，再删店铺；只想停售就用上面的「关店」。",
   confirm_required: "请先勾选确认，再执行删除。",
   failed: "操作失败，请稍后重试。",
