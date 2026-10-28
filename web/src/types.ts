@@ -452,6 +452,63 @@ export type ProductDetail = Product & {
   public_link_parse_tasks: PublicLinkParseTask[];
 };
 
+export type TokenUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  calls: number;
+};
+
+export type GenerationUsage = {
+  succeeded: number;
+  failed: number;
+};
+
+export type CostEstimate = {
+  text: number;
+  image: number;
+  video: number;
+  total: number;
+  currency: string;
+};
+
+export type DailyUsage = {
+  date: string;
+  text_total_tokens: number;
+  text_calls: number;
+  image_succeeded: number;
+  video_succeeded: number;
+};
+
+export type ModelUsage = {
+  text: TokenUsage;
+  image: GenerationUsage;
+  video: GenerationUsage;
+  video_seconds: number;
+  cost: CostEstimate;
+  trend: DailyUsage[];
+  runs_count: number;
+};
+
+export type AlertItem = {
+  id: number;
+  title: string;
+  subtitle: string | null;
+};
+
+export type AlertGroup = {
+  key: "low_stock" | "competitor_change" | "agent_failed" | "approval_pending" | string;
+  title: string;
+  hint: string;
+  count: number;
+  items: AlertItem[];
+};
+
+export type AlertSummary = {
+  total: number;
+  groups: AlertGroup[];
+};
+
 export type ModelSettings = {
   text: {
     base_url: string;

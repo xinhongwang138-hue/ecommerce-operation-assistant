@@ -1,3 +1,4 @@
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal
-from app.models import ModelProviderSetting, ModelTarget
+from app.models import AgentRun, GeneratedAsset, GenerationJob, ModelProviderSetting, ModelTarget
 
 
 TARGETS = {
@@ -15,6 +16,153 @@ TARGETS = {
     "image": ModelTarget.IMAGE,
     "video": ModelTarget.VIDEO,
 }
+
+
+def read_model_usage(db: Session, settings: Settings | None = None, days: int = 14) -> dict:
+    """按模型类型汇总累计用量与费用估算：文本看 token，图片/视频看生成次数。
+
+    agent_runs.usage 只记录文本 LLM 的扁平 token 聚合；
+    图片/视频由 generation_jobs 驱动，供应商按张/秒计费、不产生 token，
+    因此这里用生成任务的成功/失败次数作为用量口径，避免展示恒为 0 的假 token。
+    费用单价统一从 Settings 读取（.env 可覆盖），仅用于本地估算。
+    """
+    settings = settings or get_settings()
+
+    text = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "calls": 0}
+    runs_count = 0
+    for raw in db.execute(select(AgentRun.usage)).scalars().all():
+        if not raw:
+            continue
+        runs_count += 1
+        text["input_tokens"] += _as_int(raw.get("input_tokens"))
+        text["output_tokens"] += _as_int(raw.get("output_tokens"))
+        text["total_tokens"] += _as_int(raw.get("total_tokens"))
+        text["calls"] += _as_int(raw.get("calls"))
+
+    image = {"succeeded": 0, "failed": 0}
+    video = {"succeeded": 0, "failed": 0}
+    kind_buckets = {"main_image_asset": image, "video_asset": video}
+    for kind, status in db.execute(select(GenerationJob.kind, GenerationJob.status)).all():
+        bucket = kind_buckets.get(_enum_value(kind))
+        if bucket is None:
+            continue
+        status_value = _enum_value(status)
+        if status_value == "succeeded":
+            bucket["succeeded"] += 1
+        elif status_value == "failed":
+            bucket["failed"] += 1
+
+    # 视频按秒计费，时长以素材库里记录的 duration 为准；缺失时长按 0 计，不臆测。
+    video_seconds = 0
+    for duration in db.execute(
+        select(GeneratedAsset.duration).where(GeneratedAsset.asset_type == "video")
+    ).scalars().all():
+        video_seconds += _as_int(duration)
+
+    cost = {
+        "text": round(
+            text["input_tokens"] / 1_000_000 * settings.price_text_input_per_mtok
+            + text["output_tokens"] / 1_000_000 * settings.price_text_output_per_mtok,
+            4,
+        ),
+        "image": round(image["succeeded"] * settings.price_image_per_item, 4),
+        "video": round(video_seconds * settings.price_video_per_second, 4),
+        "currency": "CNY",
+    }
+    cost["total"] = round(cost["text"] + cost["image"] + cost["video"], 4)
+
+    return {
+        "text": text,
+        "image": image,
+        "video": video,
+        "video_seconds": video_seconds,
+        "cost": cost,
+        "trend": read_usage_trend(db, days=days),
+        "runs_count": runs_count,
+    }
+
+
+def read_usage_trend(db: Session, days: int = 14) -> list[dict]:
+    """按天汇总用量趋势：文本 token/调用数、图片/视频生成成功数。
+
+    agent_runs.usage 是 JSON，跨行求和无法在 SQL 里稳定表达；
+    这里按时间取回小规模行、在 Python 侧分桶累加，避免依赖不同数据库的 JSON 函数差异。
+    """
+    days = max(1, min(int(days), 90))
+    today = datetime.now(UTC).date()
+    start = today - timedelta(days=days - 1)
+    buckets: dict[date, dict] = {}
+
+    def bucket_of(day: date) -> dict:
+        return buckets.setdefault(
+            day,
+            {"text_total_tokens": 0, "text_calls": 0, "image_succeeded": 0, "video_succeeded": 0},
+        )
+
+    # 文本用量：按完成时间（缺失时用创建时间）落到自然日。
+    for finished_at, created_at, raw in db.execute(
+        select(AgentRun.finished_at, AgentRun.created_at, AgentRun.usage)
+    ).all():
+        if not raw:
+            continue
+        stamp = finished_at or created_at
+        if stamp is None:
+            continue
+        day = stamp.date()
+        if day < start or day > today:
+            continue
+        bucket = bucket_of(day)
+        bucket["text_total_tokens"] += _as_int(raw.get("total_tokens"))
+        bucket["text_calls"] += _as_int(raw.get("calls"))
+
+    # 图片/视频用量：只统计成功的生成任务。
+    for kind, status, finished_at, created_at in db.execute(
+        select(
+            GenerationJob.kind,
+            GenerationJob.status,
+            GenerationJob.finished_at,
+            GenerationJob.created_at,
+        )
+    ).all():
+        if _enum_value(status) != "succeeded":
+            continue
+        stamp = finished_at or created_at
+        if stamp is None:
+            continue
+        day = stamp.date()
+        if day < start or day > today:
+            continue
+        bucket = bucket_of(day)
+        kind_value = _enum_value(kind)
+        if kind_value == "main_image_asset":
+            bucket["image_succeeded"] += 1
+        elif kind_value == "video_asset":
+            bucket["video_succeeded"] += 1
+
+    # 补齐完整日期序列，缺失日期返回 0，前端可直接按固定长度画图。
+    return [
+        {
+            "date": (start + timedelta(days=offset)).isoformat(),
+            **buckets.get(
+                start + timedelta(days=offset),
+                {"text_total_tokens": 0, "text_calls": 0, "image_succeeded": 0, "video_succeeded": 0},
+            ),
+        }
+        for offset in range(days)
+    ]
+
+
+def _enum_value(value: object) -> str:
+    """把 SQLAlchemy 读出的 StrEnum/字符串统一成字符串，避免枚举与字符串比较踩坑。"""
+    return str(getattr(value, "value", value))
+
+
+def _as_int(value: object) -> int:
+    """把不可信的用量数值归一化为非负整数，脏数据不得让聚合接口 500。"""
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def read_model_settings(db: Session | None = None, settings: Settings | None = None) -> dict:

@@ -10,11 +10,12 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { getCurrentUser, getModelSettings, getModelSettingsError, getUsers } from "@/lib/api";
+import { getCurrentUser, getModelSettings, getModelSettingsError, getModelUsage, getUsers } from "@/lib/api";
 import Link from "next/link";
 import { getAuthToken } from "@/lib/session";
-import type { UserAccount } from "@/types";
+import type { DailyUsage, GenerationUsage, ModelUsage, UserAccount } from "@/types";
 
+import { DeleteUserButton } from "@/components/delete-user-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -29,7 +30,12 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
   const canEdit = Boolean(currentUser?.permissions.can_edit);
   const canManageUsers = Boolean(currentUser?.permissions.can_manage_users);
   // 用户列表只有具备管理权限时才请求，避免只读/普通运营账号看到成员管理数据。
-  const [settings, users] = await Promise.all([getModelSettings(), canManageUsers ? getUsers() : Promise.resolve([])]);
+  // 累计 token 用量属于只读聚合，所有登录用户都可查看，与编辑/管理权限无关。
+  const [settings, users, usage] = await Promise.all([
+    getModelSettings(),
+    canManageUsers ? getUsers() : Promise.resolve([]),
+    getModelUsage(),
+  ]);
   const params = (await searchParams) ?? {};
   const saveStatus = scalar(params.save);
   const testStatus = scalar(params.status);
@@ -93,6 +99,12 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
           </div>
         </header>
 
+        {usage ? (
+          <TokenUsageCard usage={usage} />
+        ) : (
+          <ReadOnlyNotice message="用量读取失败，请确认后端服务可用后刷新重试。" />
+        )}
+
         {saveStatus ? (
           <Notice
             ok={saveStatus === "ok"}
@@ -111,8 +123,27 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
 
         {userStatus ? (
           <Notice
-            ok={userStatus === "created"}
-            message={userStatus === "created" ? "用户已创建。" : "用户创建失败，请检查邮箱是否重复。"}
+            ok={
+              userStatus === "created" ||
+              userStatus === "deleted" ||
+              userStatus === "restored" ||
+              userStatus === "disabled"
+            }
+            message={
+              userStatus === "created"
+                ? "用户已创建。"
+                : userStatus === "deleted"
+                  ? "用户已删除（物理删除）。"
+                  : userStatus === "restored"
+                    ? "用户已恢复启用。"
+                    : userStatus === "disabled"
+                      ? "用户已停用，可在列表中随时恢复。"
+                      : userStatus === "delete_blocked"
+                        ? "该用户存在 Agent 任务/会话等审计记录，无法物理删除，请改用「停用」。"
+                        : userStatus === "status_failed"
+                          ? "停用/恢复失败：不能操作自己，也不能停用最后一个可用 owner。"
+                          : "用户操作失败，请检查邮箱是否重复或权限不足。"
+            }
           />
         ) : null}
 
@@ -272,7 +303,7 @@ export default async function SettingsPage({ searchParams }: SettingsPageProps) 
         </form>
 
         {canManageUsers ? (
-          <UserManagementPanel users={users} />
+          <UserManagementPanel users={users} currentUserId={currentUser?.id} />
         ) : (
           <ReadOnlyNotice message="当前账号没有用户管理权限，只能查看模型配置状态。" />
         )}
@@ -308,8 +339,161 @@ function ReadOnlyNotice({ message }: { message: string }) {
   );
 }
 
+/** 渲染 TokenUsageCard 组件，按模型类型只读展示累计用量与费用估算。 */
+function TokenUsageCard({ usage }: { usage: ModelUsage }) {
+  return (
+    <section className="rounded-md border border-slate-200 bg-white p-5">
+      <SectionTitle
+        icon={<KeyRound className="h-5 w-5" aria-hidden="true" />}
+        title="用量统计（按模型类型）"
+        subtitle="文本按 token、图片/视频按生成次数计量；费用按 api/.env 的 PRICE_* 单价估算"
+        tone="bg-indigo-600"
+      />
+      <div className="mt-5 grid gap-3 lg:grid-cols-3">
+        <div className="card px-4 py-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-900">文本模型</p>
+            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">Token 计费</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <UsageMetric label="输入" value={usage.text.input_tokens} />
+            <UsageMetric label="输出" value={usage.text.output_tokens} />
+            <UsageMetric label="合计" value={usage.text.total_tokens} />
+            <UsageMetric label="调用次数" value={usage.text.calls} />
+          </div>
+          <CostLine value={usage.cost.text} />
+        </div>
+        <GenerationUsageColumn title="图片模型" usage={usage.image} note="按张计费" cost={usage.cost.image} />
+        <GenerationUsageColumn
+          title="视频模型"
+          usage={usage.video}
+          note="按秒计费"
+          cost={usage.cost.video}
+          seconds={usage.video_seconds}
+        />
+      </div>
+      <UsageTrend trend={usage.trend} />
+      <p className="mt-4 text-xs text-slate-500">
+        预计总费用 {formatCny(usage.cost.total)} · 累计任务数 {usage.runs_count.toLocaleString("en-US")} · 仅估算，不代表供应商真实账单
+      </p>
+    </section>
+  );
+}
+
+/** 渲染 UsageTrend 组件，用纯 CSS 柱状图展示近 N 天文本 token 趋势。 */
+function UsageTrend({ trend }: { trend: DailyUsage[] }) {
+  if (trend.length === 0) {
+    return null;
+  }
+  const maxTokens = Math.max(1, ...trend.map((item) => item.text_total_tokens));
+  const imageTotal = trend.reduce((sum, item) => sum + item.image_succeeded, 0);
+  const videoTotal = trend.reduce((sum, item) => sum + item.video_succeeded, 0);
+  return (
+    <div className="mt-5 rounded-md border border-slate-200 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-slate-900">近 {trend.length} 天文本 Token 趋势</p>
+        <span className="text-xs text-slate-500">峰值 {maxTokens.toLocaleString("en-US")} token / 天</span>
+      </div>
+      <div className="mt-4 flex h-24 items-end gap-1">
+        {trend.map((item) => {
+          // 用固定像素高度避免百分比高度在 flex 容器里解析失败；0 值也留 2px 底线，保持日期可见。
+          const heightPx =
+            item.text_total_tokens === 0
+              ? 2
+              : Math.max(4, Math.round((item.text_total_tokens / maxTokens) * 96));
+          return (
+            <div
+              key={item.date}
+              className="group flex flex-1 items-end"
+              title={`${item.date}：${item.text_total_tokens.toLocaleString("en-US")} token / ${item.text_calls} 次调用`}
+            >
+              <div
+                className="w-full rounded-t bg-indigo-500/70 transition group-hover:bg-indigo-600"
+                style={{ height: `${heightPx}px` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex justify-between text-xs text-slate-400">
+        <span>{trend[0]?.date ?? ""}</span>
+        <span>{trend[trend.length - 1]?.date ?? ""}</span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
+        <span>区间图片生成 {imageTotal.toLocaleString("en-US")} 次</span>
+        <span>区间视频生成 {videoTotal.toLocaleString("en-US")} 次</span>
+      </div>
+    </div>
+  );
+}
+
+/** 渲染 UsageMetric 组件，统一数字的本地化格式。 */
+function UsageMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold text-slate-950">{value.toLocaleString("en-US")}</p>
+    </div>
+  );
+}
+
+/** 渲染 CostLine 组件，展示单个模型的预计费用。 */
+function CostLine({ value }: { value: number }) {
+  return (
+    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2">
+      <span className="text-xs text-slate-500">预计费用</span>
+      <span className="text-sm font-semibold text-[var(--primary)]">{formatCny(value)}</span>
+    </div>
+  );
+}
+
+/** 渲染 GenerationUsageColumn 组件，展示图片/视频的生成次数与费用（不按 token 计费）。 */
+function GenerationUsageColumn({
+  title,
+  usage,
+  note,
+  cost,
+  seconds,
+}: {
+  title: string;
+  usage: GenerationUsage;
+  note: string;
+  cost: number;
+  seconds?: number;
+}) {
+  return (
+    <div className="card px-4 py-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-900">{title}</p>
+        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{note}</span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <UsageMetric label="生成成功" value={usage.succeeded} />
+        <UsageMetric label="生成失败" value={usage.failed} />
+      </div>
+      <p className="mt-2 text-xs text-slate-500">
+        {typeof seconds === "number"
+          ? `累计时长 ${seconds.toLocaleString("en-US")} 秒（不产生 token）`
+          : "单位：次（不产生 token）"}
+      </p>
+      <CostLine value={cost} />
+    </div>
+  );
+}
+
+/** 按金额大小选择小数位，避免小额费用显示成 0.00。 */
+function formatCny(value: number): string {
+  return value >= 1 ? `¥${value.toFixed(2)}` : `¥${value.toFixed(4)}`;
+}
+
 /** 渲染 UserManagementPanel 组件，集中展示用户管理面板所需的数据、状态和操作入口。 */
-function UserManagementPanel({ users }: { users: UserAccount[] }) {
+function UserManagementPanel({
+  users,
+  currentUserId,
+}: {
+  users: UserAccount[];
+  currentUserId?: number;
+}) {
   return (
     <section className="rounded-md border border-slate-200 bg-white p-5">
       <SectionTitle
@@ -342,11 +526,12 @@ function UserManagementPanel({ users }: { users: UserAccount[] }) {
       </form>
 
       <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
-        <div className="grid grid-cols-[1fr_120px_120px_1.2fr] bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500">
+        <div className="grid grid-cols-[1fr_100px_80px_1fr_160px] bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500">
           <span>用户</span>
           <span>角色</span>
           <span>状态</span>
           <span>权限</span>
+          <span className="text-right">操作</span>
         </div>
         {users.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-slate-500">
@@ -355,19 +540,60 @@ function UserManagementPanel({ users }: { users: UserAccount[] }) {
         ) : (
           <div className="divide-y divide-slate-200">
             {users.map((user) => (
-              <div key={user.id} className="grid grid-cols-[1fr_120px_120px_1.2fr] px-4 py-3 text-sm">
+              <div
+                key={user.id}
+                className="grid grid-cols-[1fr_100px_80px_1fr_160px] items-center px-4 py-3 text-sm"
+              >
                 <div>
-                  <p className="font-medium text-slate-950">{user.display_name}</p>
+                  <p className="font-medium text-slate-950">
+                    {user.display_name}
+                    {user.id === currentUserId ? (
+                      <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                        当前账号
+                      </span>
+                    ) : null}
+                  </p>
                   <p className="mt-1 text-xs text-slate-500">{user.email}</p>
                 </div>
                 <span className="text-slate-700">{roleLabel(user.role)}</span>
-                <span className="text-slate-700">{user.status === "active" ? "启用" : "停用"}</span>
+                <span className={user.status === "active" ? "text-emerald-700" : "text-slate-400"}>
+                  {user.status === "active" ? "启用" : "已停用"}
+                </span>
                 <div className="flex flex-wrap gap-1.5">
                   {permissionBadges(user).map((badge) => (
                     <span key={badge} className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">
                       {badge}
                     </span>
                   ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  {user.status === "active" ? (
+                    <form action="/settings/users/status" method="post">
+                      <input type="hidden" name="user_id" value={user.id} />
+                      <input type="hidden" name="status" value="disabled" />
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        size="sm"
+                        disabled={user.id === currentUserId}
+                      >
+                        停用
+                      </Button>
+                    </form>
+                  ) : (
+                    <form action="/settings/users/status" method="post">
+                      <input type="hidden" name="user_id" value={user.id} />
+                      <input type="hidden" name="status" value="active" />
+                      <Button type="submit" variant="outline" size="sm">
+                        恢复
+                      </Button>
+                    </form>
+                  )}
+                  <DeleteUserButton
+                    userId={user.id}
+                    displayName={user.display_name}
+                    disabled={user.id === currentUserId}
+                  />
                 </div>
               </div>
             ))}

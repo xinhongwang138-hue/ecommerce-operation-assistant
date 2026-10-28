@@ -796,6 +796,71 @@ class ModelSettingsRead(BaseModel):
     video: VideoModelSettingsRead
 
 
+class TokenUsageRead(BaseModel):
+    # 文本模型（LLM）累计 token 消耗，从 agent_runs.usage 聚合而来。
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    calls: int = 0
+
+
+class GenerationUsageRead(BaseModel):
+    # 图片/视频生成按张/秒计费，不产生 token，这里统计生成任务的成功与失败次数。
+    succeeded: int = 0
+    failed: int = 0
+
+
+class CostEstimateRead(BaseModel):
+    # 费用估算（元）：单价来自 .env 配置，仅用于本地估算，不代表供应商真实账单。
+    text: float = 0.0
+    image: float = 0.0
+    video: float = 0.0
+    total: float = 0.0
+    currency: str = "CNY"
+
+
+class DailyUsageRead(BaseModel):
+    # 单日用量：文本 token/调用数 + 图片/视频生成成功数，用于前端趋势图。
+    date: str
+    text_total_tokens: int = 0
+    text_calls: int = 0
+    image_succeeded: int = 0
+    video_succeeded: int = 0
+
+
+class ModelUsageRead(BaseModel):
+    # 按模型类型拆分的累计用量：文本看 token，图片/视频看生成次数。
+    text: TokenUsageRead
+    image: GenerationUsageRead
+    video: GenerationUsageRead
+    video_seconds: int = 0
+    cost: CostEstimateRead
+    trend: list[DailyUsageRead] = Field(default_factory=list)
+    runs_count: int = 0
+
+
+class AlertItemRead(BaseModel):
+    # 单条待办：id 供前端拼详情链接，title/subtitle 直接展示。
+    id: int
+    title: str
+    subtitle: str | None = None
+
+
+class AlertGroupRead(BaseModel):
+    # 同类待办分组：count 为真实总数，items 只返回前若干条用于预览。
+    key: str
+    title: str
+    hint: str
+    count: int = 0
+    items: list[AlertItemRead] = Field(default_factory=list)
+
+
+class AlertSummaryRead(BaseModel):
+    # 待办中心汇总：对应首页卡片与 /alerts 页面的四个分组。
+    total: int = 0
+    groups: list[AlertGroupRead] = Field(default_factory=list)
+
+
 class TextModelSettingsUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None

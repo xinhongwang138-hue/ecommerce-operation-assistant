@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     video_workspace_id: str | None = Field(default=None, alias="VIDEO_WORKSPACE_ID")
     video_poll_interval_seconds: int = Field(default=10, alias="VIDEO_POLL_INTERVAL_SECONDS")
     video_poll_max_attempts: int = Field(default=36, alias="VIDEO_POLL_MAX_ATTEMPTS")
+    # 用量费用估算：单价全部可通过 .env 覆盖；默认值仅用于本地估算，不代表供应商真实报价。
+    # 文本按每百万 token 计价，图片按张、视频按秒。
+    price_text_input_per_mtok: float = Field(default=2.0, alias="PRICE_TEXT_INPUT_PER_MTOK")
+    price_text_output_per_mtok: float = Field(default=8.0, alias="PRICE_TEXT_OUTPUT_PER_MTOK")
+    price_image_per_item: float = Field(default=0.2, alias="PRICE_IMAGE_PER_ITEM")
+    price_video_per_second: float = Field(default=0.5, alias="PRICE_VIDEO_PER_SECOND")
     # 数字人（魔珐星云）凭证：只存后端 .env，经 GET /api/v1/digital-human/credentials 下发前端，
     # 避免 AppSecret 进入前端源码。留空时接口返回空串，前端提示未配置而不报错。
     digital_human_app_id: str = Field(default="", alias="DIGITAL_HUMAN_APP_ID")

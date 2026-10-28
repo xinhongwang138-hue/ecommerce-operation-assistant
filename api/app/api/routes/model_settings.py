@@ -5,25 +5,33 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.routes.auth import require_edit_permission, require_owner_permission
+from app.api.routes.auth import require_edit_permission, require_owner_permission, require_view_permission
 from app.db.session import get_db
 from app.models import User
-from app.schemas import ModelSettingsRead, ModelSettingsUpdate
+from app.schemas import ModelSettingsRead, ModelSettingsUpdate, ModelUsageRead
 from app.schemas import ModelSettingsTestRequest, ModelSettingsTestResult
 from app.services.link_extraction import _is_blocked_address
 from app.services.llm import LLMNotConfiguredError, LLMResponseError, create_json_chat_completion
-from app.services.model_settings import get_runtime_settings, read_model_settings, update_model_settings
+from app.services.model_settings import get_runtime_settings, read_model_settings, read_model_usage, update_model_settings
 
 router = APIRouter(prefix='/model-settings', tags=['model-settings'])
 SessionDep = Annotated[Session, Depends(get_db)]
 EditorDep = Annotated[User, Depends(require_edit_permission)]
 # 模型配置是全平台共享的，写操作必须收口到全局 owner，避免任一租户的 operator 影响其他租户。
 OwnerDep = Annotated[User, Depends(require_owner_permission)]
+# token 用量是只读展示，任意登录用户（含 viewer）均可查看。
+ViewerDep = Annotated[User, Depends(require_view_permission)]
 
 
 @router.get('', response_model=ModelSettingsRead)
 def get_model_settings(db: SessionDep, _current_user: EditorDep) -> dict:
     return read_model_settings(db)
+
+
+@router.get('/usage', response_model=ModelUsageRead)
+def get_model_usage(db: SessionDep, _current_user: ViewerDep) -> dict:
+    """累计 token 用量（只读聚合），供模型配置页展示。"""
+    return read_model_usage(db)
 
 
 @router.patch('', response_model=ModelSettingsRead)

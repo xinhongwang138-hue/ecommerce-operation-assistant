@@ -17,11 +17,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+import { AlertOverviewCard } from "@/components/alert-overview-card";
 import { DashboardCharts } from "@/components/dashboard-charts";
 import { StatCard } from "@/components/ui";
 import { ProductCreateForm } from "@/components/product-create-form";
 import { StoreCreateForm } from "@/components/store-create-form";
-import { getCurrentUser, getProducts, getStores, isBackendAvailable } from "@/lib/api";
+import { API_BASE_URL, getCurrentUser, getProducts, getStores, isBackendAvailable } from "@/lib/api";
 import { getAuthToken } from "@/lib/session";
 import type { Platform, Product, Store } from "@/types";
 
@@ -98,14 +99,14 @@ export default async function Home({ searchParams }: HomeProps) {
           className="flex flex-col gap-2 rounded-[10px] border border-[var(--danger)]/30 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)] sm:flex-row sm:items-center sm:justify-between"
         >
           <span>
-            后端服务暂时不可用（请求已超时中止，默认 4 秒），页面数据可能不完整。请确认 8020 后端已启动后刷新重试。
+            {`后端服务暂时不可用（请求已超时中止，默认 4 秒），页面数据可能不完整。请确认后端服务（${API_BASE_URL}）已启动后刷新重试。`}
           </span>
           <a href="/" className="shrink-0 font-medium underline underline-offset-4">
             重新加载
           </a>
         </div>
       ) : null}
-      {/* 页头：标题 + 渐变统计卡 */}
+      <AlertOverviewCard />
       {query.storeResult === "deleted" || query.storeResult === "notfound" ? (
         <p
           role="status"
@@ -118,6 +119,7 @@ export default async function Home({ searchParams }: HomeProps) {
           {query.storeResult === "deleted" ? "店铺已删除。" : "该店铺已不存在，可能刚被删除。"}
         </p>
       ) : null}
+      {/* 页头：标题 + 渐变统计卡 */}
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm font-semibold text-[var(--primary)]">Ecommerce Operation Assistant</p>
@@ -133,6 +135,22 @@ export default async function Home({ searchParams }: HomeProps) {
           <StatCard label="平台" value={platformCount} icon={Globe} gradient="bg-gradient-warning" />
         </div>
       </header>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-slate-500">导出</span>
+        <a href="/exports/products" className="btn-ghost inline-flex h-8 items-center gap-1.5 px-3 text-xs">
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          商品 CSV
+        </a>
+        <a href="/exports/performance" className="btn-ghost inline-flex h-8 items-center gap-1.5 px-3 text-xs">
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          绩效 CSV
+        </a>
+        <a href="/exports/usage" className="btn-ghost inline-flex h-8 items-center gap-1.5 px-3 text-xs">
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          用量 CSV
+        </a>
+      </div>
 
       {/* 仪表盘图表 */}
       <DashboardCharts

@@ -1,4 +1,4 @@
-import { Bot, ClipboardList, LayoutDashboard, ScanText, Settings } from "lucide-react";
+import { Bell, Bot, ClipboardList, LayoutDashboard, ScanText, Settings } from "lucide-react";
 import Link from "next/link";
 
 import { MobileNav } from "./mobile-nav";
@@ -8,6 +8,7 @@ import { getAuthToken } from "@/lib/session";
 
 const NAV_ITEMS = [
   { href: "/", label: "工作台", icon: LayoutDashboard, hint: "多平台店铺运营总览" },
+  { href: "/alerts", label: "待办中心", icon: Bell, hint: "低库存与异常收口" },
   { href: "/agent", label: "Agent 中心", icon: Bot, hint: "运营智能体任务" },
   { href: "/imports", label: "导入中心", icon: ClipboardList, hint: "商品/经营数据导入" },
   { href: "/ocr", label: "图片取字", icon: ScanText, hint: "图片文字识别" },

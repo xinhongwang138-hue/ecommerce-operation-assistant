@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.api.middleware import BodySizeLimitMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
-from app.api.routes import agent_platform, agent_runs, model_settings, auth, health, ocr, products, promotion_links, stores, users, workspace
+from app.api.routes import alerts, agent_platform, agent_runs, model_settings, auth, exports, health, ocr, products, promotion_links, stores, users, workspace
 from app.api.routes import chat_ws, digital_human, uploads
 from app.core.config import API_DIR, get_settings
 from app.services.spend_quota import LLMBudgetExceeded
@@ -61,7 +61,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                    allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
 app.include_router(health.router)
-for route in [agent_platform, agent_runs, model_settings, auth, products, promotion_links, stores, users, workspace, ocr]:
+for route in [alerts, agent_platform, agent_runs, model_settings, auth, exports, products, promotion_links, stores, users, workspace, ocr]:
     app.include_router(route.router, prefix='/api/v1')
 for route in [digital_human, chat_ws]:
     app.include_router(route.router, prefix='/api/v1')

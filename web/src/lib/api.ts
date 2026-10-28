@@ -1,5 +1,6 @@
 import type {
   AdExperimentDashboard,
+  AlertSummary,
   AgentRun,
   AgentApproval,
   AgentCatalog,
@@ -7,6 +8,7 @@ import type {
   AgentTask,
   AuthToken,
   ModelSettings,
+  ModelUsage,
   Product,
   ProductDetail,
   Store,
@@ -23,20 +25,37 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   "http://127.0.0.1:8000";
 
+// 后端列表接口默认分页 limit=20；不显式翻页会让第 21 条之后的数据静默丢失。
+const LIST_PAGE_SIZE = 100;
+const LIST_MAX_PAGES = 100;
+
+/** 分页拉取全量列表，避免后端默认 limit 造成页面看不到完整数据。 */
+async function fetchAllPages<T>(path: string, headers: Record<string, string>): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 0; page < LIST_MAX_PAGES; page += 1) {
+    const offset = page * LIST_PAGE_SIZE;
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}${path}?offset=${offset}&limit=${LIST_PAGE_SIZE}`,
+      { headers, cache: "no-store" },
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to load ${path}: ${response.status}`);
+    }
+    const batch = (await response.json()) as T[];
+    items.push(...batch);
+    if (batch.length < LIST_PAGE_SIZE) {
+      return items;
+    }
+  }
+  // 安全上限（100 × 100 = 10000 条）内返回已取数据，避免无限翻页拖垮服务端渲染。
+  return items;
+}
+
 /** 请求后端获取商品接口，统一处理认证、Workspace、错误和强类型响应。 */
 export async function getProducts(): Promise<Product[]> {
   try {
     // 工作台服务端渲染依赖实时运营数据，禁用缓存，避免导入或生成后仍看到旧状态。
-    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/products`, {
-      headers: await authHeaders(),
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load products: ${response.status}`);
-    }
-
-    return response.json();
+    return await fetchAllPages<Product>("/api/v1/products", await authHeaders());
   } catch {
     return [];
   }
@@ -45,16 +64,7 @@ export async function getProducts(): Promise<Product[]> {
 /** 请求后端获取stores接口，统一处理认证、Workspace、错误和强类型响应。 */
 export async function getStores(): Promise<Store[]> {
   try {
-    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/stores`, {
-      headers: await authHeaders(),
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      return [];
-    }
-
-    return response.json();
+    return await fetchAllPages<Store>("/api/v1/stores", await authHeaders());
   } catch {
     return [];
   }
@@ -208,18 +218,20 @@ export async function getAgentMemories(workspaceId: number): Promise<AgentMemory
 
 /** 请求后端获取Workspace商品接口，统一处理认证、Workspace、错误和强类型响应。 */
 export async function getWorkspaceProducts(workspaceId: number): Promise<Product[]> {
-  return fetchAgentResource<Product[]>(
-    "/api/v1/products",
-    await workspaceAuthHeaders(workspaceId),
-  );
+  try {
+    return await fetchAllPages<Product>("/api/v1/products", await workspaceAuthHeaders(workspaceId));
+  } catch {
+    throw new AgentApiError("Agent API is unavailable", null);
+  }
 }
 
 /** 请求后端获取Workspacestores接口，统一处理认证、Workspace、错误和强类型响应。 */
 export async function getWorkspaceStores(workspaceId: number): Promise<Store[]> {
-  return fetchAgentResource<Store[]>(
-    "/api/v1/stores",
-    await workspaceAuthHeaders(workspaceId),
-  );
+  try {
+    return await fetchAllPages<Store>("/api/v1/stores", await workspaceAuthHeaders(workspaceId));
+  } catch {
+    throw new AgentApiError("Agent API is unavailable", null);
+  }
 }
 
 /** 请求后端获取model模型设置接口，统一处理认证、Workspace、错误和强类型响应。 */
@@ -261,6 +273,43 @@ export async function getModelSettingsError(): Promise<"unauthorized" | "network
     return "network";
   } catch {
     return "network";
+  }
+}
+
+/** 请求后端获取累计 token 用量接口，统一处理认证、Workspace、错误和强类型响应。 */
+export async function getModelUsage(): Promise<ModelUsage | null> {
+  try {
+    // 累计用量从 agent_runs.usage 聚合，只读展示，禁用缓存避免看到过期数据。
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/model-settings/usage`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+/** 请求后端获取待办中心汇总，统一处理认证、Workspace、错误和强类型响应。 */
+export async function getAlertSummary(): Promise<AlertSummary | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/alerts/summary`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json();
+  } catch {
+    return null;
   }
 }
 

@@ -1,22 +1,23 @@
 ﻿<#
 .SYNOPSIS
-    启动（或重启）本机 8020 端口的 FastAPI 后端，供 web 开发服务器使用。
+    启动（或重启）本机 8001 端口的 FastAPI 后端，供 web 开发服务器使用。
 
 .DESCRIPTION
     1. 使用 api\.venv 内的 Python 与 app.main:app 启动 uvicorn，工作目录固定为 api 目录，确保读取 api\.env。
     2. 启动前用 /health 探测端口：已在健康运行则不重复启动；-Restart 时只停止由本脚本记录且命令行匹配 uvicorn app.main:app 的进程。
-    3. 日志追加写入 api\logs\backend-8020.out.log 与 backend-8020.err.log，PID 写入 api\logs\backend-8020.pid。
+    3. 日志追加写入 api\logs\backend-<端口>.out.log 与 backend-<端口>.err.log，PID 写入 api\logs\backend-<端口>.pid。
     4. 脚本不包含也不读取任何账号、密码、密钥等凭据，后端凭据仍由 api\.env 管理。
+    5. 默认端口 8001，与 web\.env.local 的 NEXT_PUBLIC_API_BASE_URL / API_INTERNAL_BASE_URL 保持一致。
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File api\scripts\start_backend_8020.ps1
+    powershell -ExecutionPolicy Bypass -File api\scripts\start_backend.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File api\scripts\start_backend_8020.ps1 -Restart
+    powershell -ExecutionPolicy Bypass -File api\scripts\start_backend.ps1 -Restart
 #>
 [CmdletBinding()]
 param(
-    [int]$Port = 8020,
+    [int]$Port = 8001,
     [string]$HostName = "127.0.0.1",
     [switch]$Restart,
     [int]$WaitSeconds = 40
