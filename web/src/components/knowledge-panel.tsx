@@ -56,6 +56,30 @@ export function KnowledgePanel({ initialDocuments }: { initialDocuments: Knowled
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+
+  /** 选文件时就立刻校验并给反馈，而不是等点"上传并入库"之后 */
+  const acceptFile = useCallback((candidate: File | null) => {
+    if (!candidate) return;
+    const suffix = `.${candidate.name.split(".").pop()?.toLowerCase() ?? ""}`;
+    if (!ACCEPTED.includes(suffix)) {
+      setError(`只支持 ${ACCEPTED.join(" / ")}，当前文件是 ${suffix || "无后缀"}。`);
+      return;
+    }
+    if (candidate.size > MAX_UPLOAD_BYTES) {
+      setError(
+        `${candidate.name} 有 ${(candidate.size / 1024 / 1024).toFixed(1)}MB，超过 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB 上限。`,
+      );
+      return;
+    }
+    if (candidate.size === 0) {
+      setError(`${candidate.name} 是空文件。`);
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setFile(candidate);
+  }, []);
 
   const loadDocuments = useCallback(async () => {
     const response = await fetch("/knowledge/documents", { cache: "no-store" }).catch(() => null);
@@ -93,18 +117,9 @@ export function KnowledgePanel({ initialDocuments }: { initialDocuments: Knowled
   }, [documents, loadDocuments]);
 
   async function handleSubmit() {
-    const file = inputRef.current?.files?.[0];
+    // 类型、体积、空文件都在 acceptFile 里拦过了，这里只处理"没选文件"
     if (!file) {
       setError("请先选择一份 PDF 或 Markdown 文档。");
-      return;
-    }
-    const suffix = `.${file.name.split(".").pop()?.toLowerCase() ?? ""}`;
-    if (!ACCEPTED.includes(suffix)) {
-      setError(`只支持 ${ACCEPTED.join(" / ")}，当前文件是 ${suffix || "无后缀"}。`);
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setError(`文件 ${(file.size / 1024 / 1024).toFixed(1)}MB，超过 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB 上限。`);
       return;
     }
 
@@ -129,6 +144,8 @@ export function KnowledgePanel({ initialDocuments }: { initialDocuments: Knowled
       const created = data as KnowledgeDocument;
       setNotice(`已受理「${created.title}」，开始解析。`);
       setDocuments((previous) => [created, ...previous]);
+      // 清掉已受理的文件，否则拖拽区会一直显示旧文件名、再点上传会重复提交
+      setFile(null);
       if (inputRef.current) inputRef.current.value = "";
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "上传失败，请稍后重试。");
@@ -170,19 +187,60 @@ export function KnowledgePanel({ initialDocuments }: { initialDocuments: Knowled
         </button>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ACCEPTED.join(",")}
-          className="text-xs"
-          aria-label="选择要上传的资料"
-        />
+      {/* 拖拽区 + 隐藏 input：与"图片取字"面板同一套交互，
+          原生 input 直接摆出来会和全站风格脱节 */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label="选择要上传的资料"
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+          acceptFile(event.dataTransfer.files?.[0] ?? null);
+        }}
+        className="mt-4 flex min-h-[104px] cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-[var(--border)] bg-[var(--muted)] px-4 py-5 text-center outline-none focus:border-[var(--primary)]"
+      >
+        <FileUp className="h-6 w-6 text-[var(--muted-foreground)]" aria-hidden="true" />
+        {file ? (
+          <>
+            <span className="text-sm font-medium text-[var(--foreground)]">{file.name}</span>
+            <span className="text-xs text-[var(--muted-foreground)]">
+              {formatSize(file.size)} · 点击可重新选择
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-sm font-medium text-[var(--foreground)]">
+              拖入产品手册，或点击选择文件
+            </span>
+            <span className="text-xs text-[var(--muted-foreground)]">
+              支持 {ACCEPTED.join(" / ")}，单个不超过 {MAX_UPLOAD_BYTES / 1024 / 1024} MB
+            </span>
+          </>
+        )}
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACCEPTED.join(",")}
+        className="hidden"
+        onChange={(event) => acceptFile(event.target.files?.[0] ?? null)}
+      />
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
           className="btn-primary"
           onClick={() => void handleSubmit()}
-          disabled={busy}
+          disabled={busy || !file}
         >
           {busy ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
           上传并入库
