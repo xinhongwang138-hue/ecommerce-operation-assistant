@@ -9,6 +9,7 @@ from app.models import AgentApprovalStatus, AgentMemoryStatus, AgentReviewDecisi
 from app.models import AgentRiskLevel, AgentRunStatus, AgentTaskStatus, MembershipStatus
 from app.models import CreativePlanStatus, CreativePlanType, GenerationJobKind
 from app.models import GenerationJobStatus, InventoryMovementType, Platform
+from app.models import KnowledgeDocumentStatus
 from app.models import PlatformAccountStatus, ProductSkuStatus, StoreStatus, UserRole, UserStatus
 from app.models import WorkspaceStatus
 
@@ -1404,3 +1405,53 @@ class OcrStatusRead(BaseModel):
     model: str
     base_url: str
     max_image_bytes: int
+
+
+class KnowledgeDocumentRead(BaseModel):
+    """资料列表/详情读模型。
+
+    刻意不返回 stored_path：那是服务端目录结构，进响应体等于把内部路径透露出去，
+    前端要取原文时走受控的 /uploads 读取接口。
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    original_filename: str
+    content_type: str | None
+    size_bytes: int | None
+    status: KnowledgeDocumentStatus
+    status_message: str | None
+    error_message: str | None
+    product_id: int | None
+    kb_item_name: str | None
+    chunk_count: int | None
+    submitted_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=500)
+    product_id: int | None = None
+    limit: int = Field(default=5, ge=1, le=20)
+
+
+class KnowledgeSourceRead(BaseModel):
+    """智库返回的单条引用出处，字段与智库 sources_utils 对齐"""
+
+    id: int | None = None
+    title: str | None = None
+    file_title: str | None = None
+    chunk_id: str | None = None
+    score: float | None = None
+    snippet: str | None = None
+    source: str | None = None
+
+
+class KnowledgeSearchRead(BaseModel):
+    answer: str
+    sources: list[KnowledgeSourceRead] = Field(default_factory=list)
+    item_names: list[str] = Field(default_factory=list)

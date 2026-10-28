@@ -351,6 +351,11 @@ class Workspace(TimestampMixin, Base):
     )
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    knowledge_documents: Mapped[list["KnowledgeDocument"]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+    )
+
 
 class WorkspaceMembership(TimestampMixin, Base):
     __tablename__ = "workspace_memberships"
@@ -1214,3 +1219,61 @@ class GenerationJobEvent(TimestampMixin, Base):
     worker_id: Mapped[str | None] = mapped_column(String(120))
 
     job: Mapped[GenerationJob] = relationship(back_populates="events")
+
+
+class KnowledgeDocumentStatus(StrEnum):
+    # 智库导入是分钟级长任务（PDF 解析 + 本地向量化），状态要能支撑工作台进度展示
+    # 与失败重试，所以按阶段建枚举，不用一个布尔字段糊弄。
+    PENDING = "pending"
+    SUBMITTING = "submitting"
+    PARSING = "parsing"
+    SPLITTING = "splitting"
+    RECOGNIZING = "recognizing"
+    EMBEDDING = "embedding"
+    IMPORTING = "importing"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class KnowledgeDocument(TimestampMixin, Base):
+    """掌柜智库资料：归属真源在电商库，智库侧只按 tenant_id 存切片。
+
+    原文必须由本服务留存：智库的 MinIO 只存抽取出的图片，原始文档仅落在其
+    output/YYYYMMDD/{task_id}/ 临时目录，随时会被清理。少了这一份，"引用出处
+    指向具体文档"就无从落地。
+    """
+
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    # 可选归属商品：Agent 生成该商品文案时用它缩小检索范围
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
+    uploaded_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    # 落盘路径相对 UPLOAD_DIR，不写绝对路径，避免内网目录结构进入响应体
+    stored_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120))
+    size_bytes: Mapped[int | None] = mapped_column()
+
+    # 智库侧标识：kb_doc_id = sha1("tenant|file_title")，用于后续删除/重传对齐
+    kb_task_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    kb_doc_id: Mapped[str | None] = mapped_column(String(64))
+    kb_item_name: Mapped[str | None] = mapped_column(String(255))
+
+    status: Mapped[KnowledgeDocumentStatus] = mapped_column(
+        Enum(KnowledgeDocumentStatus, values_callable=enum_values),
+        default=KnowledgeDocumentStatus.PENDING,
+        index=True,
+    )
+    status_message: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    chunk_count: Mapped[int | None] = mapped_column()
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    workspace: Mapped["Workspace"] = relationship(back_populates="knowledge_documents")

@@ -72,3 +72,22 @@ def dispatch_outbox_events_task() -> int:
 def maintain_agent_runtime_task() -> dict[str, int]:
     """维护Agentruntime任务，把队列消息转换为可重试、可记录状态的后台任务执行。"""
     return maintain_agent_runtime()
+
+
+@celery_app.task(name="knowledge.submit_import")
+def submit_knowledge_import(document_id: int) -> int:
+    """把一份资料提交给掌柜智库并轮询到终态。
+
+    刻意不配 autoretry：智库的 /upload 不是幂等接口，重试会产生第二个导入任务、
+    写入两批切片。失败状态已落到 knowledge_documents，由用户在工作台重新提交，
+    比后台静默重投更容易解释也更容易排查。
+
+    :param document_id: knowledge_documents.id
+    :return: 已处理的资料 id
+    """
+    from app.db.session import SessionLocal
+    from app.services.knowledge_documents import import_document
+
+    with SessionLocal() as db:
+        document = import_document(db, document_id)
+        return document.id

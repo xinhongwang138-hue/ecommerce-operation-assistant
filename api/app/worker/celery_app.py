@@ -19,6 +19,10 @@ celery_app.conf.update(
         "agent.run_product_operation": {"queue": settings.celery_agent_queue},
         "agent.run_registered_workflow": {"queue": settings.celery_agent_workflow_queue},
         "maintenance.*": {"queue": settings.celery_maintenance_queue},
+        # 知识库导入单独成列：MinerU 解析 + 本地向量化是分钟级任务，和 generation
+        # 混跑会把素材生成饿死，和 agent 混跑又会被那两个任务的 1700/1800s 时间限制
+        # 拦腰砍断——所以这里只加路由，不给 knowledge.* 设 task_annotations。
+        "knowledge.*": {"queue": settings.celery_knowledge_queue},
     },
     task_track_started=True,
     # 任务执行成功后再确认消息，worker 崩溃时由队列重投，配合数据库状态避免生成任务无声丢失。
