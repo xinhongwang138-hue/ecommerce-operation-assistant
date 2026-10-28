@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import API_DIR, get_settings
@@ -23,6 +24,7 @@ from app.services.knowledge_proxy import (
     KnowledgeNotConfiguredError,
     KnowledgeUpstreamError,
     fetch_import_status,
+    search as kb_search,
     upload_document,
 )
 
@@ -285,3 +287,67 @@ def time_sleep(seconds: int) -> None:
     import time
 
     time.sleep(seconds)
+
+
+def agent_knowledge_refs(
+    db: Session,
+    workspace_id: int,
+    query: str,
+    *,
+    limit: int = 4,
+) -> list[dict]:
+    """为 Agent 取回本租户可用的资料片段。
+
+    任何失败都只记日志并返回空列表：知识库是增强项，它挂了不能把整条商品文案
+    生成链路一起拖停，也不能让 Agent 拿到没有归属的裸文本。
+
+    :param db: 会话
+    :param workspace_id: 租户
+    :param query: 检索问题（一般由商品名 + 类目拼出）
+    :param limit: 最多取几条
+    :return: [{file_title, chunk_id, parent_title, snippet, score, document_id}]
+    """
+    ready = db.scalar(
+        select(func.count(KnowledgeDocument.id)).where(
+            KnowledgeDocument.workspace_id == workspace_id,
+            KnowledgeDocument.status == KnowledgeDocumentStatus.READY,
+        )
+    )
+    if not ready:
+        # 这个租户压根没有已入库资料：不打智库，省掉一次必然空手的往返
+        return []
+
+    try:
+        result = kb_search(workspace_id, query[:500])
+    except (KnowledgeNotConfiguredError, KnowledgeUpstreamError) as exc:
+        logger.warning("Agent 知识库检索跳过 workspace=%s reason=%s", workspace_id, exc)
+        return []
+
+    refs: list[dict] = []
+    for source in (result.get("sources") or [])[:limit]:
+        if not isinstance(source, dict):
+            continue
+        file_title = (source.get("file_title") or "").strip()
+        snippet = (source.get("snippet") or "").strip()
+        if not file_title or not snippet:
+            continue
+        # 反查本租户资料行：只有能对上号的出处才允许展示成"可点击的来源"，
+        # 对不上的说明不是本租户登记的文档，宁可不给链接
+        document_id = db.scalar(
+            select(KnowledgeDocument.id).where(
+                KnowledgeDocument.workspace_id == workspace_id,
+                KnowledgeDocument.title == file_title[:255],
+            )
+        )
+        refs.append(
+            {
+                "file_title": file_title[:255],
+                "chunk_id": str(source.get("chunk_id") or "") or None,
+                "parent_title": (source.get("parent_title") or source.get("title") or "")[:255] or None,
+                "snippet": snippet[:400],
+                "score": source.get("score") if isinstance(source.get("score"), (int, float)) else None,
+                "document_id": int(document_id) if document_id is not None else None,
+            }
+        )
+    logger.info("Agent 知识库取回 %s 条出处 workspace=%s", len(refs), workspace_id)
+    return refs

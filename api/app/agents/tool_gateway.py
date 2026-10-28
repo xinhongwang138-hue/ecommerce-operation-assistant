@@ -29,6 +29,7 @@ from app.services.creative_plans import generate_main_image_plans, generate_vide
 from app.services.competitor_monitoring import run_competitor_monitor
 from app.services.diagnosis import generate_product_diagnosis
 from app.services.inventory_advice import generate_inventory_advice
+from app.services.knowledge_documents import agent_knowledge_refs
 from app.services.promotion_links import build_promotion_link_payloads
 from app.services.review import generate_review
 from app.services.agent_leases import require_active_lease
@@ -184,6 +185,14 @@ class ToolGateway:
             "inventory.advice.draft": lambda: self._inventory_advice(
                 db,
                 store_id=input_payload["store_id"],
+            ),
+            # 租户从 gateway 上下文取（上面已校验 run.workspace_id 与之相等），
+            # 不接受 input_payload 里的 workspace_id，否则就是一个按 ID 直查他租户资料的口子。
+            "knowledge.search": lambda: agent_knowledge_refs(
+                db,
+                self.context.workspace_id,
+                str(input_payload.get("query") or ""),
+                limit=min(int(input_payload.get("limit") or 4), 10),
             ),
         }
         handler = handlers.get(tool_key)

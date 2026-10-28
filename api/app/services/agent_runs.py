@@ -58,6 +58,7 @@ from app.services.agent_leases import (
     renew_active_lease,
     require_active_lease,
 )
+from app.services.knowledge_documents import agent_knowledge_refs
 
 
 ACTIVE_AGENT_RUN_STATUSES = {
@@ -508,6 +509,17 @@ def _load_product_context(product_id: int) -> ProductContext:
         )
         if product is None:
             raise AgentRunStateError("Product not found while building agent context")
+        # 租户从商品行本身取，而不是从调用方传参：这条链路会经 Celery 恢复重放，
+        # 传参一旦与数据归属不一致就会拿别家资料，落库的出处也就不可信。
+        knowledge_refs = (
+            agent_knowledge_refs(
+                db,
+                product.workspace_id,
+                f"{product.name} {product.category or ''} 卖点 参数 使用方法",
+            )
+            if product.workspace_id is not None
+            else []
+        )
         return ProductContext(
             product_id=product.id,
             name=product.name,
@@ -519,6 +531,7 @@ def _load_product_context(product_id: int) -> ProductContext:
             selling_points=product.selling_points,
             product_url=product.product_url,
             images=product.images,
+            knowledge_refs=knowledge_refs,
             competitors=[
                 {
                     "name": competitor.name,
