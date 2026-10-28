@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.middleware import BodySizeLimitMiddleware
-from app.models import Base, KnowledgeDocument, KnowledgeDocumentStatus
+from app.models import Base, KnowledgeDocument, KnowledgeDocumentStatus, Platform, Product
 from app.services import knowledge_documents as kd
 from app.services.knowledge_documents import _stage_of, create_document, store_upload
 from tests.support import make_engine
@@ -272,3 +272,67 @@ def test_body_size_limit_still_caps_knowledge_upload_above_its_own_ceiling():
         _drive_middleware("/api/v1/knowledge/documents", "POST", body, 16 * 1024 * 1024)
     )
     assert code == 413 and read == 0
+
+
+def test_product_context_carries_knowledge_refs(monkeypatch):
+    """_load_product_context 是"资料 → 文案生成"的唯一接缝。
+
+    出处就是在这里断掉的：检索取到了、但没被塞进 ProductContext，
+    后面 prompt 与落库全都看不到。所以这个接缝必须有测试钉住。
+    """
+    from app.agents.contracts import ProductContext
+    from app.services import agent_runs
+
+    engine = make_engine()
+    Base.metadata.create_all(bind=engine)
+
+    captured: dict = {}
+
+    def fake_refs(db, workspace_id, query, *, limit: int = 4):
+        captured["workspace_id"] = workspace_id
+        captured["query"] = query
+        return [{
+            "file_title": "烫金机手册", "chunk_id": "9", "parent_title": "保养",
+            "snippet": "每季度清洁", "score": 0.8, "document_id": 3,
+        }]
+
+    monkeypatch.setattr(agent_runs, "SessionLocal", lambda: Session(engine))
+    monkeypatch.setattr(agent_runs, "agent_knowledge_refs", fake_refs)
+
+    with Session(engine) as db:
+        db.add(Product(id=101, workspace_id=7, name="HAK180烫金机",
+                       platform=Platform.DOUYIN, category="包装设备"))
+        db.commit()
+
+    context = agent_runs._load_product_context(101)
+
+    assert isinstance(context, ProductContext)
+    assert captured["workspace_id"] == 7, "租户没从商品行取，跨租户风险"
+    assert "HAK180烫金机" in captured["query"]
+    assert len(context.knowledge_refs) == 1
+    assert context.knowledge_refs[0].file_title == "烫金机手册"
+    assert context.knowledge_refs[0].document_id == 3
+
+
+def test_product_context_without_workspace_skips_knowledge(monkeypatch):
+    """历史数据里 workspace_id 可为空；这种商品不该被随便归到某个租户下去检索"""
+    from app.services import agent_runs
+
+    engine = make_engine()
+    Base.metadata.create_all(bind=engine)
+    calls: list = []
+
+    monkeypatch.setattr(agent_runs, "SessionLocal", lambda: Session(engine))
+    monkeypatch.setattr(
+        agent_runs, "agent_knowledge_refs",
+        lambda *a, **k: calls.append(a) or [],
+    )
+
+    with Session(engine) as db:
+        db.add(Product(id=102, workspace_id=None, name="无主商品", platform=Platform.DOUYIN))
+        db.commit()
+
+    context = agent_runs._load_product_context(102)
+
+    assert context.knowledge_refs == []
+    assert calls == []
