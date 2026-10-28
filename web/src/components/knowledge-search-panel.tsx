@@ -6,6 +6,35 @@ import { useState } from "react";
 import type { KnowledgeSearchResult, KnowledgeSource } from "@/types";
 
 /**
+ * 智库答案是 Markdown 文本，这里只做最小可读化。
+ *
+ * 不引入 markdown 渲染器：答案里的图片是 ObjectStorage 的内网地址，直接渲染成图片
+ * 在其它机器上必然裂图，摊成裸 URL 又会把内网地址糊在界面上。统一收成「[图片]」，
+ * 顺带去掉 ** 与反引号，避免用户看到字面的星号。
+ */
+function formatAnswer(text: string): string {
+  const flattened = text
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "[图片]")
+    .replace(/https?:\/\/\S+?\.(?:png|jpe?g|webp|gif)\b/g, "[图片]")
+    .replace(/【图片】/g, "[图片]")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1");
+
+  // 一篇文档常带多张图，逐张摊开会把答案尾部撑成一片「[图片]」。
+  // 这里按行收敛：连续（允许中间夹空行）的图片标记只留一个。
+  const kept: string[] = [];
+  for (const line of flattened.split("\n")) {
+    if (line.trim() === "[图片]") {
+      while (kept.length > 0 && kept[kept.length - 1].trim() === "") kept.pop();
+      if (kept[kept.length - 1] !== "[图片]") kept.push("[图片]");
+    } else {
+      kept.push(line);
+    }
+  }
+  return kept.join("\n").trim();
+}
+
+/**
  * 检索预览面板：验证"这份资料进库后确实能被查到"，并直接看到出处。
  *
  * 出处要能指到具体文档：file_title 是文档名，chunk_id 是切片主键，
@@ -88,7 +117,7 @@ export function KnowledgeSearchPanel() {
       {answer ? (
         <div className="mt-3 rounded-[10px] border border-[var(--border)] px-3 py-2">
           <p className="text-xs font-medium text-[var(--muted-foreground)]">答案</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm">{answer}</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm">{formatAnswer(answer)}</p>
         </div>
       ) : null}
 
