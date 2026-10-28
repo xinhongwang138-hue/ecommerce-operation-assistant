@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Bot, ClipboardList, LayoutDashboard, LogOut, Menu, ScanText, Settings, X } from "lucide-react";
+import { Bell, BookOpen, Bot, ClipboardList, LayoutDashboard, LogOut, Menu, ScanText, Settings, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/alerts", label: "待办中心", icon: Bell },
   { href: "/agent", label: "Agent 中心", icon: Bot },
   { href: "/imports", label: "导入中心", icon: ClipboardList },
+  { href: "/knowledge", label: "掌柜智库", icon: BookOpen },
   { href: "/ocr", label: "图片取字", icon: ScanText },
   { href: "/settings", label: "模型配置", icon: Settings },
 ];

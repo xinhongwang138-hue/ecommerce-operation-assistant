@@ -1,4 +1,4 @@
-import { Bell, Bot, ClipboardList, LayoutDashboard, ScanText, Settings } from "lucide-react";
+import { Bell, BookOpen, Bot, ClipboardList, LayoutDashboard, ScanText, Settings } from "lucide-react";
 import Link from "next/link";
 
 import { MobileNav } from "./mobile-nav";
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/alerts", label: "待办中心", icon: Bell, hint: "低库存与异常收口" },
   { href: "/agent", label: "Agent 中心", icon: Bot, hint: "运营智能体任务" },
   { href: "/imports", label: "导入中心", icon: ClipboardList, hint: "商品/经营数据导入" },
+  { href: "/knowledge", label: "掌柜智库", icon: BookOpen, hint: "资料入库与检索引用" },
   { href: "/ocr", label: "图片取字", icon: ScanText, hint: "图片文字识别" },
   { href: "/settings", label: "模型配置", icon: Settings, hint: "模型与用户管理" },
 ];

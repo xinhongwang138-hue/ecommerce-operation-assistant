@@ -796,3 +796,51 @@ export type AgentMemory = {
   created_at: string;
   updated_at: string;
 };
+
+/** 掌柜智库资料状态，与后端 KnowledgeDocumentStatus 逐一对应。 */
+export type KnowledgeDocumentStatus =
+  | "pending"
+  | "submitting"
+  | "parsing"
+  | "splitting"
+  | "recognizing"
+  | "embedding"
+  | "importing"
+  | "ready"
+  | "failed";
+
+/** 一份资料的读模型；后端刻意不返回存储路径，前端不拼内部目录。 */
+export type KnowledgeDocument = {
+  id: number;
+  title: string;
+  original_filename: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  status: KnowledgeDocumentStatus;
+  status_message: string | null;
+  error_message: string | null;
+  product_id: number | null;
+  kb_item_name: string | null;
+  chunk_count: number | null;
+  submitted_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** 检索命中的一条出处。 */
+export type KnowledgeSource = {
+  id: number | null;
+  title: string | null;
+  file_title: string | null;
+  chunk_id: string | null;
+  score: number | null;
+  snippet: string | null;
+  source: string | null;
+};
+
+export type KnowledgeSearchResult = {
+  answer: string;
+  sources: KnowledgeSource[];
+  item_names: string[];
+};

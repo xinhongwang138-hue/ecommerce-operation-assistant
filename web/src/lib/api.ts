@@ -12,6 +12,7 @@ import type {
   Product,
   ProductDetail,
   Store,
+  KnowledgeDocument,
   StoreInventoryMovementRow,
   StoreInventorySummary,
   UserAccount,
@@ -407,5 +408,21 @@ async function fetchAgentResource<T>(
   } catch (error) {
     if (error instanceof AgentApiError) throw error;
     throw new AgentApiError("Agent API is unavailable", null);
+  }
+}
+
+/** 请求知识库资料列表；失败返回空数组，与其余列表读取保持一致的降级方式。 */
+export async function getKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/knowledge/documents?limit=100`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as KnowledgeDocument[];
+  } catch {
+    return [];
   }
 }
