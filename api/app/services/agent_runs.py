@@ -755,6 +755,16 @@ def _finalize_agent_run(
             creative_rows = []
             for plan in approved_output.creative_plans:
                 content = plan.model_dump(mode="json", exclude={"title", "source", "provenance"})
+                # provenance 整体不落库（里面有模型名等不该进业务字段的东西），但
+                # 知识库出处必须留下，否则"引用了哪份资料的哪一段"在界面上无从显示。
+                # 只挑这一个键显式写进 content，避免把 provenance 的其余部分带进去。
+                knowledge_refs = (
+                    plan.provenance.get("knowledge_refs")
+                    if isinstance(plan.provenance, dict)
+                    else None
+                )
+                if knowledge_refs:
+                    content["knowledge_refs"] = knowledge_refs
                 creative_row = CreativePlan(
                     product_id=run.product_id,
                     agent_run_id=run.id,

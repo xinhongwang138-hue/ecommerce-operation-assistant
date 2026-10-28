@@ -844,3 +844,13 @@ export type KnowledgeSearchResult = {
   sources: KnowledgeSource[];
   item_names: string[];
 };
+
+/** 创意方案里留存的智库出处：Agent 生成时引用的资料片段。 */
+export type KnowledgeCitation = {
+  file_title?: string | null;
+  chunk_id?: string | null;
+  parent_title?: string | null;
+  snippet?: string | null;
+  score?: number | null;
+  document_id?: number | null;
+};

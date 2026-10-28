@@ -38,6 +38,7 @@ import type {
   CompetitorMonitor,
   GeneratedAsset,
   GenerationJob,
+  KnowledgeCitation,
   PerformanceRecord,
   ProductDetail,
   PromotionLink,
@@ -1215,6 +1216,8 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
                       ))}
                     </div>
                   </div>
+
+                  <PlanKnowledgeSources content={plan.content} />
 
                   <div className="mt-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3042,6 +3045,51 @@ function PlanField({
 function planText(content: Record<string, unknown>, key: string): string {
   const value = content[key];
   return typeof value === "string" ? value : "";
+}
+
+/** 从方案 content 里安全取出智库出处列表；结构异常时一律当作"没有引用"。 */
+function planKnowledgeRefs(content: Record<string, unknown>): KnowledgeCitation[] {
+  const raw = content["knowledge_refs"];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (item): item is KnowledgeCitation =>
+      typeof item === "object" && item !== null && !!(item as KnowledgeCitation).file_title,
+  );
+}
+
+/**
+ * 参考来源块：显示这条文案引用了哪份资料的哪一段。
+ *
+ * 出处来自 Agent 运行时检索到的知识库切片，落库在 content.knowledge_refs。
+ * 没有引用时整块不渲染，避免给纯规则生成的方案摆一个空壳。
+ */
+function PlanKnowledgeSources({ content }: { content: Record<string, unknown> }) {
+  const refs = planKnowledgeRefs(content);
+  if (refs.length === 0) return null;
+
+  return (
+    <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+      <p className="text-xs font-medium text-slate-500">参考来源（掌柜智库）</p>
+      <ol className="mt-2 space-y-2">
+        {refs.map((ref, index) => (
+          <li key={`${ref.chunk_id ?? index}`}>
+            <p className="text-xs font-medium text-slate-800">
+              [{index + 1}] {ref.file_title}
+              {typeof ref.score === "number" ? (
+                <span className="ml-2 font-normal text-slate-500">相关度 {ref.score.toFixed(3)}</span>
+              ) : null}
+            </p>
+            {ref.parent_title ? (
+              <p className="mt-0.5 text-xs text-slate-500">段落：{ref.parent_title}</p>
+            ) : null}
+            {ref.snippet ? (
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{ref.snippet}</p>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 /** 内容文本，把不可信表单或 JSON 值转换为页面逻辑可安全使用的类型。 */
