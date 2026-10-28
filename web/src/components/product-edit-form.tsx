@@ -38,7 +38,7 @@ export function ProductEditForm({ canEdit = true, product, stores }: ProductEdit
         />
       </label>
 
-      {stores.length > 0 ? (
+      {stores.length > 0 || product.store_id != null ? (
         <label className="block">
           <span className="text-sm font-medium text-slate-700">所属店铺</span>
           <select
@@ -46,7 +46,7 @@ export function ProductEditForm({ canEdit = true, product, stores }: ProductEdit
             defaultValue={product.store_id ?? ""}
             className="mt-2 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
           >
-            {product.store_id == null ? <option value="">未归属店铺</option> : null}
+            <option value="">不归属任何店铺</option>
             {stores.map((store) => (
               <option key={store.id} value={store.id}>
                 {store.name}
@@ -54,7 +54,8 @@ export function ProductEditForm({ canEdit = true, product, stores }: ProductEdit
             ))}
           </select>
           <p className="mt-1 text-xs text-slate-500">
-            换店铺会把该商品连同 SKU、库存一起挪过去；要删掉某个店铺，先把它下面的商品挪走。
+            换店铺会把该商品连同 SKU、库存一起挪过去。只有一家店铺时无处可转，可先选「不归属任何店铺」解除归属，
+            商品和它的历史数据都还在，之后新建店铺再挂回去。
           </p>
         </label>
       ) : null}

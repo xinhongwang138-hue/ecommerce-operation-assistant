@@ -25,7 +25,7 @@ export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const formData = await request.formData();
   const values = productUpdateSchema.parse(Object.fromEntries(formData.entries()));
-  const storeId = parseStoreId(values.store_id);
+  const storeAssignment = parseStoreAssignment(values.store_id);
   const response = await fetch(`${API_BASE_URL}/api/v1/products/${id}`, {
     method: "PATCH",
     headers: {
@@ -41,8 +41,8 @@ export async function POST(request: Request, context: RouteContext) {
       target_audience: emptyToNull(values.target_audience),
       selling_points: formLines(values.selling_points),
       product_url: emptyToNull(values.product_url),
-      // 留空时整个字段不发：后端 PATCH 用 exclude_unset，缺省即"归属不动"。
-      ...(storeId === null ? {} : { store_id: storeId }),
+      // 字段缺失＝归属不动；空串＝用户主动选了「不归属任何店铺」。两种语义不能合并。
+      ...(storeAssignment === undefined ? {} : { store_id: storeAssignment }),
     }),
   });
 
@@ -58,8 +58,9 @@ function emptyToNull(value?: string): string | null {
   return value && value.trim() ? value.trim() : null;
 }
 
-/** 解析表单里的店铺 id；空值或非正整数都当成"不改动归属"。 */
-function parseStoreId(value?: string): number | null {
+/** 解析店铺归属：undefined 表示不发该字段，null 表示解除归属，正整数表示转移到该店铺。 */
+function parseStoreAssignment(value?: string): number | null | undefined {
+  if (value === undefined) return undefined;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }

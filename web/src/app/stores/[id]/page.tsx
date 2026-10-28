@@ -52,7 +52,7 @@ const STORE_STATUS_LABELS: Record<StoreStatus, string> = {
 const STORE_ERROR_MESSAGES: Record<string, string> = {
   invalid: "未知的店铺状态，未做任何修改。",
   forbidden: "没有权限：改状态需要店铺编辑权限，删除需要该工作区 owner。",
-  has_products: "该店铺下仍有商品，删除被拒绝。请到商品编辑页把商品转移到其他店铺，再删店铺；只想停售就用上面的「关店」。",
+  has_products: "该店铺下仍有商品，删除被拒绝。请到商品编辑页把商品转移到其他店铺，或改选「不归属任何店铺」解除归属，再删店铺；只想停售就用上面的「关闭」。",
   confirm_required: "请先勾选确认，再执行删除。",
   failed: "操作失败，请稍后重试。",
 };
@@ -185,7 +185,7 @@ export default async function StorePage({ params, searchParams }: StorePageProps
               <div className="flex items-center gap-3">
                 <span className="text-xs text-[var(--muted-foreground)]">
                   {storeProducts.length > 0
-                    ? `该店铺下有 ${storeProducts.length} 个商品，需先把商品转移到其他店铺才能删店`
+                    ? `该店铺下有 ${storeProducts.length} 个商品，需先转移或解除归属才能删店`
                     : "删除不可恢复；只是暂时不用可改为「关闭」"}
                 </span>
                 <button
