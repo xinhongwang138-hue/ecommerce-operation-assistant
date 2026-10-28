@@ -54,7 +54,7 @@ const workflow = [
 ];
 
 type HomeProps = {
-  searchParams?: Promise<{ platform?: string; store?: string; demo?: string }>;
+  searchParams?: Promise<{ platform?: string; store?: string; storeResult?: string; demo?: string }>;
 };
 
 /** 渲染首页页面；在服务端加载业务数据，并把交互交给对应表单或客户端组件。 */
@@ -106,6 +106,18 @@ export default async function Home({ searchParams }: HomeProps) {
         </div>
       ) : null}
       {/* 页头：标题 + 渐变统计卡 */}
+      {query.storeResult === "deleted" || query.storeResult === "notfound" ? (
+        <p
+          role="status"
+          className={`rounded-[10px] border px-4 py-2 text-sm ${
+            query.storeResult === "deleted"
+              ? "border-[var(--success)]/30 bg-[var(--success-soft)] text-[var(--success)]"
+              : "border-[var(--warning)]/30 bg-[var(--warning-soft)] text-[var(--warning)]"
+          }`}
+        >
+          {query.storeResult === "deleted" ? "店铺已删除。" : "该店铺已不存在，可能刚被删除。"}
+        </p>
+      ) : null}
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-sm font-semibold text-[var(--primary)]">Ecommerce Operation Assistant</p>

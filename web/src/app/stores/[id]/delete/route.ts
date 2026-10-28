@@ -26,7 +26,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (response.status === 204) {
     // 店铺列表页在首页工作台，这里不跳回已删除的详情页。
-    redirect("/?store=deleted");
+    redirect("/?storeResult=deleted");
   }
   if (response.status === 409) {
     redirect(`/stores/${id}?storeError=has_products`);
@@ -35,7 +35,8 @@ export async function POST(request: Request, context: RouteContext) {
     redirect(`/stores/${id}?storeError=forbidden`);
   }
   if (response.status === 404) {
-    redirect(`/stores/${id}?storeError=notfound`);
+    // 详情页对不存在的店铺直接 notFound()，提示留在原地等于没提示。
+    redirect("/?storeResult=notfound");
   }
   redirect(`/stores/${id}?storeError=failed`);
 }
