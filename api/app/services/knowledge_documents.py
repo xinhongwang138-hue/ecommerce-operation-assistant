@@ -91,7 +91,7 @@ def store_upload(workspace_id: int, upload: UploadFile) -> tuple[str, str, Path,
                 handle.close()
                 target.unlink(missing_ok=True)
                 raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                     detail=f"文件超过 {limit // (1024 * 1024)}MB 上限",
                 )
             handle.write(chunk)

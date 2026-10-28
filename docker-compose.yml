@@ -156,7 +156,9 @@ services:
         condition: service_healthy
       agent-checkpoints:
         condition: service_healthy
-    command: celery -A app.worker.celery_app.celery_app worker --loglevel=INFO -Q generation,agent,agent.workflow,maintenance -B
+    # -Q 里必须带上 knowledge，否则知识库导入任务投进无人认领的队列，
+    # 界面表现为状态一直停在"排队中"且不报错。改名时需同步 CELERY_KNOWLEDGE_QUEUE。
+    command: celery -A app.worker.celery_app.celery_app worker --loglevel=INFO -Q generation,agent,agent.workflow,maintenance,knowledge -B
 
   web:
     image: ecommerce-operation-assistant-web:latest
