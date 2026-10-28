@@ -154,7 +154,7 @@ def search(workspace_id: int, query: str, session_id: str | None = None) -> dict
     :param workspace_id: 租户
     :param query: 检索问题
     :param session_id: 可选会话 ID，缺省由智库生成
-    :return: {answer, sources, item_names, session_id}
+    :return: {answer, sources, item_names, session_id, done_list}
     """
     _, query_base, timeout = _require_endpoints()
     body: dict[str, Any] = {"query": query, "is_stream": False}
@@ -172,4 +172,6 @@ def search(workspace_id: int, query: str, session_id: str | None = None) -> dict
         "sources": result.get("sources") or [],
         "item_names": result.get("item_names") or [],
         "session_id": result.get("session_id") or "",
+        # done_list 用来区分两种"空结果"：智库在消歧追问时压根没跑检索节点
+        "done_list": result.get("done_list") or [],
     }

@@ -163,6 +163,36 @@ def test_agent_knowledge_refs_maps_sources_and_links_document_id(db, monkeypatch
     assert refs[0]["parent_title"] == "保养"
 
 
+def test_disambiguation_reply_is_flagged_not_silent(db, monkeypatch, caplog):
+    """智库没认出商品主体时会回一句追问，sources 为空但 HTTP 200。
+
+    不区分这种空，Agent 就会长期静默地拿不到资料而无人知情。
+    """
+    db.add(
+        KnowledgeDocument(
+            workspace_id=5,
+            title="手册",
+            original_filename="手册.md",
+            stored_path="knowledge/5/z.md",
+            status=KnowledgeDocumentStatus.READY,
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(
+        kd,
+        "kb_search",
+        lambda *_a, **_k: {
+            "answer": "您是想问以下哪个产品？请明确型号。",
+            "sources": [],
+            "item_names": [],
+            "done_list": ["node_item_name_confirm", "node_answer_output"],
+        },
+    )
+    with caplog.at_level("WARNING"):
+        assert kd.agent_knowledge_refs(db, 5, "随便") == []
+    assert "未执行检索" in caplog.text
+
+
 def test_stage_of_picks_deepest_completed_node():
     assert _stage_of([]) is KnowledgeDocumentStatus.SUBMITTING
     assert _stage_of(["node_document_split"]) is KnowledgeDocumentStatus.SPLITTING

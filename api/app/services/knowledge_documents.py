@@ -323,6 +323,17 @@ def agent_knowledge_refs(
         logger.warning("Agent 知识库检索跳过 workspace=%s reason=%s", workspace_id, exc)
         return []
 
+    # 智库在"没认出商品主体"时会直接回一句消歧追问，sources 为空但 HTTP 是 200。
+    # 不区分这一种空，Agent 就会长期静默地拿不到资料而无人知情。
+    done_list = [str(node) for node in (result.get("done_list") or [])]
+    search_ran = any(node.startswith("node_search_embedding") for node in done_list)
+    if not search_ran:
+        logger.warning(
+            "知识库未执行检索（多半是没认出商品主体，智库回了消歧追问）"
+            " workspace=%s item_names=%s done_list=%s",
+            workspace_id, result.get("item_names"), done_list,
+        )
+
     refs: list[dict] = []
     for source in (result.get("sources") or [])[:limit]:
         if not isinstance(source, dict):
