@@ -90,6 +90,16 @@ services:
       VIDEO_WORKSPACE_ID: ${VIDEO_WORKSPACE_ID:-}
       VIDEO_POLL_INTERVAL_SECONDS: ${VIDEO_POLL_INTERVAL_SECONDS:-10}
       VIDEO_POLL_MAX_ATTEMPTS: ${VIDEO_POLL_MAX_ATTEMPTS:-36}
+      # 掌柜智库跑在宿主上（8010 导入 / 8011 检索），容器里的 127.0.0.1 指的是容器自己，
+      # 所以这里走 host.docker.internal；本地开发用的 KB_*_BASE_URL 仍是 127.0.0.1，
+      # 故意不复用，避免把宿主地址带进容器（也避免有人改了 .env 只在一侧生效）。
+      KB_IMPORT_BASE_URL: ${KB_IMPORT_BASE_URL_DOCKER:-http://host.docker.internal:8010}
+      KB_QUERY_BASE_URL: ${KB_QUERY_BASE_URL_DOCKER:-http://host.docker.internal:8011}
+      # 与智库侧 KB_INTERNAL_SECRET 必须逐字一致；留空时知识库接口按未配置返回 503，不会静默降级
+      KB_INTERNAL_SECRET: ${KB_INTERNAL_SECRET:-}
+      KB_TIMEOUT_SECONDS: ${KB_TIMEOUT_SECONDS:-180}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
@@ -147,6 +157,13 @@ services:
       VIDEO_WORKSPACE_ID: ${VIDEO_WORKSPACE_ID:-}
       VIDEO_POLL_INTERVAL_SECONDS: ${VIDEO_POLL_INTERVAL_SECONDS:-10}
       VIDEO_POLL_MAX_ATTEMPTS: ${VIDEO_POLL_MAX_ATTEMPTS:-36}
+      # knowledge.submit_import 在 worker 里跑，同样要能回调智库的 /upload 与 /status
+      KB_IMPORT_BASE_URL: ${KB_IMPORT_BASE_URL_DOCKER:-http://host.docker.internal:8010}
+      KB_QUERY_BASE_URL: ${KB_QUERY_BASE_URL_DOCKER:-http://host.docker.internal:8011}
+      KB_INTERNAL_SECRET: ${KB_INTERNAL_SECRET:-}
+      KB_TIMEOUT_SECONDS: ${KB_TIMEOUT_SECONDS:-180}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - api-uploads:/app/uploads
     depends_on:

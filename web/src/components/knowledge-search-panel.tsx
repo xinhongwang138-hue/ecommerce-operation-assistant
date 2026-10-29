@@ -125,30 +125,32 @@ export function KnowledgeSearchPanel() {
         <div className="mt-3">
           <p className="text-xs font-medium text-[var(--muted-foreground)]">参考来源</p>
           <ol className="mt-2 space-y-2">
-            {sources.map((source, index) => (
-              <li key={`${source.chunk_id ?? index}`} className="rounded-[10px] border border-[var(--border)] px-3 py-2">
-                <p className="text-xs font-medium">
-                  [{index + 1}] {source.file_title ?? source.title ?? "未知文档"}
-                  {source.score !== null && source.score !== undefined ? (
-                    <span className="ml-2 text-[var(--muted-foreground)]">
-                      相关度 {source.score.toFixed(3)}
-                    </span>
+            {sources.map((source, index) => {
+              // 出处指到"哪一章"：parent_title 是切片所属章节，title 只是切片首个标题行。
+              // parent_title 缺失时（联网结果、老数据）回落到 title。
+              const section = source.parent_title || source.title;
+              return (
+                <li key={`${source.chunk_id ?? index}`} className="rounded-[10px] border border-[var(--border)] px-3 py-2">
+                  <p className="text-xs font-medium">
+                    [{index + 1}] {source.file_title ?? source.title ?? "未知文档"}
+                    {source.score !== null && source.score !== undefined ? (
+                      <span className="ml-2 text-[var(--muted-foreground)]">
+                        相关度 {source.score.toFixed(3)}
+                      </span>
+                    ) : null}
+                  </p>
+                  {section && section !== source.file_title ? (
+                    <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">段落：{section}</p>
                   ) : null}
-                </p>
-                {/* 章节用的是 title：智库 sources 里目前只有它可用（切片首个标题行）。
-                    parent_title 虽已进检索返回字段，但还没贯穿到 sources，
-                    这里不能显示一个取不到的字段。 */}
-                {source.title && source.title !== source.file_title ? (
-                  <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">段落：{source.title}</p>
-                ) : null}
-                {source.snippet ? (
-                  <p className="mt-1 line-clamp-2 text-xs">{source.snippet}</p>
-                ) : null}
-                {source.chunk_id ? (
-                  <p className="mt-1 text-[11px] text-[var(--muted-foreground)]">切片 {source.chunk_id}</p>
-                ) : null}
-              </li>
-            ))}
+                  {source.snippet ? (
+                    <p className="mt-1 line-clamp-2 text-xs">{source.snippet}</p>
+                  ) : null}
+                  {source.chunk_id ? (
+                    <p className="mt-1 text-[11px] text-[var(--muted-foreground)]">切片 {source.chunk_id}</p>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         </div>
       ) : null}

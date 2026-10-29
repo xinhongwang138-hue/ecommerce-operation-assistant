@@ -832,6 +832,7 @@ export type KnowledgeDocument = {
 export type KnowledgeSource = {
   id: number | null;
   title: string | null;
+  parent_title: string | null;
   file_title: string | null;
   chunk_id: string | null;
   score: number | null;

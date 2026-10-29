@@ -1444,6 +1444,7 @@ class KnowledgeSourceRead(BaseModel):
 
     id: int | None = None
     title: str | None = None
+    parent_title: str | None = None
     file_title: str | None = None
     chunk_id: str | None = None
     score: float | None = None

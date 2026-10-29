@@ -194,6 +194,7 @@ def search_knowledge(
             KnowledgeSourceRead(
                 id=item.get("id"),
                 title=_text(item.get("title")),
+                parent_title=_text(item.get("parent_title")),
                 file_title=_text(item.get("file_title")),
                 chunk_id=_text(item.get("chunk_id")),
                 score=item.get("score") if isinstance(item.get("score"), (int, float)) else None,
