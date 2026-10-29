@@ -102,7 +102,8 @@ export function KnowledgeSearchPanel() {
           className="min-w-[220px] flex-1 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm"
           aria-label="检索问题"
         />
-        <button type="button" className="btn-primary" onClick={() => void handleSearch()} disabled={loading}>
+        {/* 与左侧输入框同高：btn-primary 本身没有内边距，不补就会出现文字贴边 */}
+        <button type="button" className="btn-primary h-9 gap-1.5 px-3 text-sm" onClick={() => void handleSearch()} disabled={loading}>
           {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
           检索
         </button>

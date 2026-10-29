@@ -181,7 +181,8 @@ export function KnowledgePanel({ initialDocuments }: { initialDocuments: Knowled
             上传产品手册、话术与规范文档，入库后 Agent 生成文案时会引用并标注出处。
           </p>
         </div>
-        <button type="button" className="btn-ghost" onClick={() => void loadDocuments()}>
+        {/* btn-ghost 只给形状不给尺寸，裸用会没有内边距（文字贴边），高度也得自己定 */}
+        <button type="button" className="btn-ghost h-8 gap-1.5 px-3 text-xs" onClick={() => void loadDocuments()}>
           <RefreshCw size={14} />
           刷新
         </button>
@@ -238,7 +239,7 @@ export function KnowledgePanel({ initialDocuments }: { initialDocuments: Knowled
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="btn-primary"
+          className="btn-primary h-9 gap-1.5 px-3 text-sm"
           onClick={() => void handleSubmit()}
           disabled={busy || !file}
         >
@@ -283,7 +284,7 @@ export function KnowledgePanel({ initialDocuments }: { initialDocuments: Knowled
                     <StatusBadge label={stage.label} tone={stage.tone} />
                     <button
                       type="button"
-                      className="btn-ghost"
+                      className="btn-ghost h-8 w-8 p-0"
                       onClick={() => void handleDelete(document)}
                       disabled={busy}
                       aria-label={`删除 ${document.title}`}
