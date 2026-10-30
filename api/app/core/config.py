@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, alias="LLM_MODEL")
+
+    # 自建 RAG 的向量化。只配 EMBEDDING_MODEL 就够：base_url 与 api_key 缺省继承
+    # LLM_*，因为同一家供应商的对话与向量端点通常在同一个兼容网关下。
+    # 三个都空时向量召回整体关闭，检索退化成纯词法（这是可用的降级，不是故障）。
+    embedding_model: str | None = Field(default=None, alias="EMBEDDING_MODEL")
+    embedding_base_url: str | None = Field(default=None, alias="EMBEDDING_BASE_URL")
+    embedding_api_key: str | None = Field(default=None, alias="EMBEDDING_API_KEY")
     # 图片取字（OCR）单列一组配置：默认沿用文本模型的地址与密钥，只换模型名，
     # 这样接入方只要多配一个 OCR_MODEL 就能用，不必重复填 key。
     ocr_model: str = Field(default="qwen-vl-ocr-2025-11-20", alias="OCR_MODEL")
@@ -104,6 +111,10 @@ class Settings(BaseSettings):
     kb_internal_token_ttl_seconds: int = Field(default=120, alias="KB_INTERNAL_TOKEN_TTL_SECONDS")
     kb_timeout_seconds: int = Field(default=120, alias="KB_TIMEOUT_SECONDS")
     knowledge_max_upload_bytes: int = Field(default=64 * 1024 * 1024, alias="KNOWLEDGE_MAX_UPLOAD_BYTES")
+    # 数据中台（P06）：分析侧不碰业务库连接，落成 DuckDB 单文件仓，每个 Workspace 一个文件。
+    # 目录必须可写且与业务库分离——把分析查询压回 MySQL 会让一次全表扫描拖垮下单链路。
+    warehouse_dir: str = Field(default=str(API_DIR / "warehouse"), alias="WAREHOUSE_DIR")
+    warehouse_query_max_rows: int = Field(default=500, alias="WAREHOUSE_QUERY_MAX_ROWS")
 
     #核心方法是读取本地的.env文件覆盖当前对象中的变量值 
     # 推荐写成绝对路径的形式 指定固定的.env文件

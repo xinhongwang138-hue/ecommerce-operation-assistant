@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -1277,3 +1278,565 @@ class KnowledgeDocument(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     workspace: Mapped["Workspace"] = relationship(back_populates="knowledge_documents")
+
+
+class RagSourceKind(StrEnum):
+    """自建知识库的入库方式。文件解析不在这一层做，见 ADR 0010。"""
+
+    TEXT = "text"
+    MARKDOWN = "markdown"
+
+
+class RagDocument(TimestampMixin, Base):
+    """自建 RAG 的原文。
+
+    与 `knowledge_documents` 的分工是刻意的：那张表存**上传的文件**并交给外部智库
+    解析（PDF/OCR 那些脏活），这张表存**已经能直接切分的文本**。两条链路并存——
+    外部服务不可用时（`KB_*` 未配置），自建链路仍能跑通，这就是「独立化」的含义。
+
+    原文必须自己留一份：引用要能指回具体位置（char_start/char_end），只存向量
+    等于把证据丢掉。
+    """
+
+    __tablename__ = "rag_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source_kind: Mapped[RagSourceKind] = mapped_column(
+        Enum(RagSourceKind, values_callable=enum_values),
+        default=RagSourceKind.TEXT,
+        nullable=False,
+    )
+    # 长文超过 MySQL TEXT 的 64KB，这里在 MySQL 上用 LONGTEXT，其他方言退回 Text
+    content: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    char_count: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    chunk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    # 没配 embedding 端点时这三列保持原样，检索会退化成纯词法，且 stats 会如实报告
+    embedding_model: Mapped[str | None] = mapped_column(String(80))
+    embedded_chunks: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    chunks: Mapped[list["RagChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        # 不能用 passive_deletes=True：那等于把删子行的责任交给数据库的 ON DELETE
+        # CASCADE，而 SQLite 默认不开外键约束，测试与轻量部署都会留下孤儿切片。
+        passive_deletes=False,
+    )
+
+
+class RagChunk(Base):
+    """切片。
+
+    `embedding` 存 JSON 数组而不是向量库：这一层的规模上限是"万级切片"，
+    超出就该换 pgvector / Milvus（ADR 0009 写了换的时机）。在那之前，多引一个
+    向量库换来的是运维成本，不是检索质量。
+    """
+
+    __tablename__ = "rag_chunks"
+    __table_args__ = (UniqueConstraint("document_id", "ordinal", name="uq_rag_chunk_ordinal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("rag_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    content: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    # 指向原文的字符区间：引用能落到"第几个字到第几个字"，而不是"某篇文档里可能有"
+    char_start: Mapped[int] = mapped_column(default=0, nullable=False)
+    char_end: Mapped[int] = mapped_column(default=0, nullable=False)
+    token_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    embedding: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    document: Mapped["RagDocument"] = relationship(back_populates="chunks")
+
+
+class QaSessionSource(StrEnum):
+    """质检会话的来源。导入与仓内拉取必须能区分，否则报告说不清数据从哪来。"""
+
+    IMPORT = "import"
+    AGENT = "agent"
+
+
+class QaRole(StrEnum):
+    """会话双方。上游叫 user/bot，这里统一成客户与坐席。"""
+
+    CUSTOMER = "customer"
+    AGENT = "agent"
+
+
+class QaSession(TimestampMixin, Base):
+    """一次待质检的客服会话。
+
+    `external_id` 是上游会话的唯一标识，与 workspace 组成幂等键：同一批数据重复
+    导入只会更新，不会把排行榜的分母悄悄翻倍。
+    """
+
+    __tablename__ = "qa_sessions"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "external_id", name="uq_qa_session_external"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    external_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    # 被考核对象（坐席）。排行榜按它聚合，所以不允许为空。
+    agent_name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    channel: Mapped[str] = mapped_column(String(40), default="manual", nullable=False)
+    source_kind: Mapped[QaSessionSource] = mapped_column(
+        Enum(QaSessionSource, values_callable=enum_values),
+        default=QaSessionSource.IMPORT,
+        nullable=False,
+        index=True,
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    message_count: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    messages: Mapped[list["QaMessage"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="QaMessage.seq",
+        passive_deletes=False,
+    )
+    score: Mapped["QaScore | None"] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        uselist=False,
+        passive_deletes=False,
+    )
+
+
+class QaMessage(Base):
+    """会话里的一句话。`seq` 是从 0 开始的顺序号，证据回溯全靠它。"""
+
+    __tablename__ = "qa_messages"
+    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_qa_message_seq"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("qa_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    seq: Mapped[int] = mapped_column(nullable=False)
+    role: Mapped[QaRole] = mapped_column(Enum(QaRole, values_callable=enum_values), nullable=False)
+    content: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    # 客户发言是这条会话的"问题"，时间戳用来算首响时效；缺失时该规则明确判 0 而不是猜。
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped["QaSession"] = relationship(back_populates="messages")
+
+
+class QaScore(TimestampMixin, Base):
+    """一份会话评分快照。
+
+    只保留最新一份（`session_id` 唯一），但记下 `rule_version`：规则改动后必须
+    显式重算，历史报告的分数不会自己变——这点对考核类功能是硬要求。
+    """
+
+    __tablename__ = "qa_scores"
+    __table_args__ = (UniqueConstraint("session_id", name="uq_qa_score_session"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("qa_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    total: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False, index=True)
+    grade: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    # 逐条规则的结果与证据都在这里：报告要能指出"哪句话、哪一项扣了分"
+    breakdown: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    redline: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+    redline_rules: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    scored_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    session: Mapped["QaSession"] = relationship(back_populates="score")
+
+
+class CsTicketStatus(StrEnum):
+    """转人工工单的状态。只做三态，不做工作流引擎。"""
+
+    OPEN = "open"
+    CLAIMED = "claimed"
+    CLOSED = "closed"
+
+
+class CsTicket(TimestampMixin, Base):
+    """转人工工单。
+
+    为什么落在独立表而不是给会话加个 `needs_handoff` 标记：工单要有自己的生命周期
+    （待认领 → 处理中 → 关闭）、优先级和原因，会长出 SLA 统计。塞进会话表里，
+    这些字段迟早会互相污染。
+    """
+
+    __tablename__ = "cs_tickets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_conversations.id"), nullable=False, index=True
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str] = mapped_column(String(200), nullable=False)
+    # 触发原因的分类键（要求人工 / 情绪负面 / 超出知识范围），用于聚合"为什么转人工"
+    trigger: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    priority: Mapped[str] = mapped_column(String(10), default="normal", nullable=False, index=True)
+    status: Mapped[CsTicketStatus] = mapped_column(
+        Enum(CsTicketStatus, values_callable=enum_values),
+        default=CsTicketStatus.OPEN,
+        nullable=False,
+        index=True,
+    )
+    summary: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ContractStatus(StrEnum):
+    """合同的评审阶段。
+
+    只有四态：收下、抽完、复核完、失败。合同审批不是工作流引擎，
+    状态一多就会出现"这个状态该谁处理"的扯皮。
+    """
+
+    UPLOADED = "uploaded"
+    EXTRACTED = "extracted"  # 条款抽好了、规则也打过一轮，等语义复核
+    REVIEWED = "reviewed"
+    FAILED = "failed"
+
+
+class ContractRiskLevel(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class Contract(TimestampMixin, Base):
+    """一份待审合同。
+
+    原文落在 `text` 而不是只留文件路径：条款风险报告要能指回原句，而原句必须
+    和打分时看到的那一版一致。文件可以被替换，落库的文本不会。
+    """
+
+    __tablename__ = "contracts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False)
+    # 同一个文件重复上传时用它做提示，不做强制去重（合同改一版是常态）
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    text: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    status: Mapped[ContractStatus] = mapped_column(
+        Enum(ContractStatus, values_callable=enum_values),
+        default=ContractStatus.UPLOADED,
+        nullable=False,
+        index=True,
+    )
+    extract_error: Mapped[str | None] = mapped_column(String(300))
+    clause_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    risk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    high_risk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    # 0-100，分越高越该拦。口径写在 app/contracts/scoring.py 里
+    risk_score: Mapped[int] = mapped_column(default=0, nullable=False, index=True)
+    risk_level: Mapped[ContractRiskLevel] = mapped_column(
+        Enum(ContractRiskLevel, values_callable=enum_values),
+        default=ContractRiskLevel.LOW,
+        nullable=False,
+        index=True,
+    )
+    # 语义复核的结论。规则看得出"账期 90 天"，看不出"验收标准由甲方单方决定"
+    summary: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"))
+    semantic_checked: Mapped[bool] = mapped_column(default=False, nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    clauses: Mapped[list["ContractClause"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="ContractClause.ordinal"
+    )
+    risks: Mapped[list["ContractRisk"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="ContractRisk.id"
+    )
+    approvals: Mapped[list["ContractApproval"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="ContractApproval.id"
+    )
+
+
+class ContractClause(Base):
+    """切出来的一条条款。
+
+    `char_start` / `char_end` 指向 `contracts.text` 的字符区间——和 RAG 的切片一样，
+    引用必须能落回原文，否则报告里的"第 3 条"没人能核对。
+    """
+
+    __tablename__ = "contract_clauses"
+    __table_args__ = (UniqueConstraint("contract_id", "ordinal", name="uq_contract_clause_ordinal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    heading: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    text: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    char_start: Mapped[int] = mapped_column(nullable=False)
+    char_end: Mapped[int] = mapped_column(nullable=False)
+
+    contract: Mapped["Contract"] = relationship(back_populates="clauses")
+
+
+class ContractRisk(Base):
+    """一条风险。`source` 区分它是规则抓的还是模型读出来的。
+
+    这个区分不是为了好看：规则命中的可以逐条摊开争论"这条规则对不对"，模型读出的
+    只能提供理由和原文，不能复现。混在一起会让整份报告的可信度都掉到模型水平。
+    """
+
+    __tablename__ = "contract_risks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    clause_ordinal: Mapped[int | None] = mapped_column()
+    clause_kind: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    rule_key: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    severity: Mapped[ContractRiskLevel] = mapped_column(
+        Enum(ContractRiskLevel, values_callable=enum_values), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    detail: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    # 触发这条判断的原句。没有原句的风险条目一律不许进报告
+    quote: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    source: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    # 建议改法。审批意见里最有用的一栏
+    suggestion: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+
+    contract: Mapped["Contract"] = relationship(back_populates="risks")
+
+
+class ContractApproval(Base):
+    """审批留痕。只追加，不修改。
+
+    审批意见是给别人看的证据，改一次就失去意义。要改结论就再写一条，
+    历史两条都在——这也是"谁在什么时候批了什么风险"能对上的前提。
+    """
+
+    __tablename__ = "contract_approvals"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    decision: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    comment: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    decided_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    # 审批当时的风险快照。事后规则改版，也要能说明"当时看到的是这 5 条"
+    risk_snapshot: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    contract: Mapped["Contract"] = relationship(back_populates="approvals")
+
+
+class LiveSessionStatus(StrEnum):
+    """一场直播的处理状态。转写进来 → 切片挑完 → 有人定过。"""
+
+    TRANSCRIBED = "transcribed"
+    CUT = "cut"
+    REVIEWED = "reviewed"
+
+
+class LiveClipStatus(StrEnum):
+    SUGGESTED = "suggested"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class LiveSession(TimestampMixin, Base):
+    """一场直播的转写。
+
+    `transcript` 是 `[{start, end, text}]` 的数组，不是一段大文本：切片的边界要落在
+    句子上，而句子的时间戳是唯一能对上视频的锚点。存成一段文本再回头找时间码，
+    等于把已经有的信息扔掉又重新猜一遍。
+    """
+
+    __tablename__ = "live_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    product_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(default=0, nullable=False)
+    transcript: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[LiveSessionStatus] = mapped_column(
+        Enum(LiveSessionStatus, values_callable=enum_values),
+        default=LiveSessionStatus.TRANSCRIBED,
+        nullable=False,
+        index=True,
+    )
+    clip_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    clips: Mapped[list["LiveClip"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="LiveClip.score.desc()"
+    )
+
+
+class LiveClip(Base):
+    """一个切片候选。
+
+    `reasons` 存的是"这条为什么值得切"，逐条列出命中的卖点词。没有理由的候选
+    在剪辑台上等于噪声——运营没有时间一个个点开看。
+    """
+
+    __tablename__ = "live_clips"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("live_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    start_seconds: Mapped[int] = mapped_column(nullable=False)
+    end_seconds: Mapped[int] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    hook: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    transcript: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    score: Mapped[int] = mapped_column(default=0, nullable=False, index=True)
+    reasons: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[LiveClipStatus] = mapped_column(
+        Enum(LiveClipStatus, values_callable=enum_values),
+        default=LiveClipStatus.SUGGESTED,
+        nullable=False,
+        index=True,
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped["LiveSession"] = relationship(back_populates="clips")
+
+
+class FinetuneDatasetStatus(StrEnum):
+    DRAFT = "draft"
+    READY = "ready"
+    EXPORTED = "exported"
+
+
+class FinetuneJobStatus(StrEnum):
+    REGISTERED = "registered"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class FinetuneDataset(TimestampMixin, Base):
+    """一份训练数据集。
+
+    `stats` 存的是构建时的分布快照（来源占比、质量分层、平均长度）。改了样本
+    之后分布会变，所以要看当时那份训练数据长什么样，只能靠这份快照。
+    """
+
+    __tablename__ = "finetune_datasets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(40), default="sft_chat", nullable=False)
+    status: Mapped[FinetuneDatasetStatus] = mapped_column(
+        Enum(FinetuneDatasetStatus, values_callable=enum_values),
+        default=FinetuneDatasetStatus.DRAFT,
+        nullable=False,
+        index=True,
+    )
+    sample_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    builder_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    samples: Mapped[list["FinetuneSample"]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan"
+    )
+
+
+class FinetuneSample(Base):
+    """一条训练样本。
+
+    `fingerprint` 是 messages 的哈希，用来去重。同一句话在不同场次里出现三次，
+    进了训练集就会让模型对这句话过拟合——去重必须在入库前做，不能指望训练框架。
+    """
+
+    __tablename__ = "finetune_samples"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "fingerprint", name="uq_finetune_sample_fingerprint"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    dataset_id: Mapped[int] = mapped_column(
+        ForeignKey("finetune_datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    # 指向原始记录，如 "qa_session:12" / "cs_conversation:5" / "contract_risk:9"
+    source_ref: Mapped[str] = mapped_column(String(80), nullable=False)
+    quality: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    messages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    dataset: Mapped["FinetuneDataset"] = relationship(back_populates="samples")
+
+
+class FinetuneJob(Base):
+    """一次训练任务。
+
+    本平台只登记，不执行。`status` 由人推进（或由外部训练服务回调），
+    `metrics` 与 `eval` 都是人工/脚本填进来的台账——正因为不执行，
+    这里必须如实显示"未运行"，而不是假装有进度。
+    """
+
+    __tablename__ = "finetune_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    dataset_id: Mapped[int] = mapped_column(
+        ForeignKey("finetune_datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    base_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    params: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[FinetuneJobStatus] = mapped_column(
+        Enum(FinetuneJobStatus, values_callable=enum_values),
+        default=FinetuneJobStatus.REGISTERED,
+        nullable=False,
+        index=True,
+    )
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # 评测：同一批题在 base 与 tuned 上的得分，以及差值
+    eval_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    note: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), default="", nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    dataset: Mapped["FinetuneDataset"] = relationship()
