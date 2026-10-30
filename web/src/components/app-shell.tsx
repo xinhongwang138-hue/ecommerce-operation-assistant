@@ -1,20 +1,10 @@
-import { Bell, BookOpen, Bot, ClipboardList, LayoutDashboard, ScanText, Settings } from "lucide-react";
 import Link from "next/link";
 
 import { MobileNav } from "./mobile-nav";
 import { ThemeToggle } from "./theme-toggle";
 import { getCurrentUser } from "@/lib/api";
+import { NAV_ITEMS } from "@/lib/nav";
 import { getAuthToken } from "@/lib/session";
-
-const NAV_ITEMS = [
-  { href: "/", label: "工作台", icon: LayoutDashboard, hint: "多平台店铺运营总览" },
-  { href: "/alerts", label: "待办中心", icon: Bell, hint: "低库存与异常收口" },
-  { href: "/agent", label: "Agent 中心", icon: Bot, hint: "运营智能体任务" },
-  { href: "/imports", label: "导入中心", icon: ClipboardList, hint: "商品/经营数据导入" },
-  { href: "/knowledge", label: "掌柜智库", icon: BookOpen, hint: "资料入库与检索引用" },
-  { href: "/ocr", label: "图片取字", icon: ScanText, hint: "图片文字识别" },
-  { href: "/settings", label: "模型配置", icon: Settings, hint: "模型与用户管理" },
-];
 
 /** 渲染 AppShell 组件，提供统一侧边栏导航、顶部工具栏与主内容区。 */
 export async function AppShell({ children }: { children: React.ReactNode }) {

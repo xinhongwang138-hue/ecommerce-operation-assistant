@@ -7,8 +7,31 @@ import type {
   AgentMemory,
   AgentTask,
   AuthToken,
+  DataPlatformLineage,
+  DataPlatformMetric,
+  DataPlatformMetricSeries,
+  CsFaqItem,
+  CsSummary,
+  CsTicket,
+  Contract,
+  ContractScoringRow,
+  ContractSummary,
+  FinetuneDataset,
+  FinetuneJob,
+  FinetuneSummary,
+  LiveSession,
+  LiveSessionListItem,
+  LiveSummary,
+  DataPlatformOverview,
+  DataPlatformQualityReport,
   ModelSettings,
   ModelUsage,
+  Nl2SqlExample,
+  QaLeaderboard,
+  QaSessions,
+  QaSummary,
+  RagDocument,
+  RagStats,
   Product,
   ProductDetail,
   Store,
@@ -422,6 +445,364 @@ export async function getKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
       return [];
     }
     return (await response.json()) as KnowledgeDocument[];
+  } catch {
+    return [];
+  }
+}
+
+/** 数据中台概览：未跑批时返回 ready=false 的空结构，页面据此提示"先抽一次"。 */
+export async function getDataPlatformOverview(): Promise<DataPlatformOverview | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/data-platform/overview`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as DataPlatformOverview;
+  } catch {
+    return null;
+  }
+}
+
+/** 指标口径目录：与仓是否就绪无关，口径声明在代码里。 */
+export async function getDataPlatformMetrics(): Promise<DataPlatformMetric[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/data-platform/metrics`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as DataPlatformMetric[];
+  } catch {
+    return [];
+  }
+}
+
+/** 最近一次跑批的质量校验结果。 */
+export async function getDataPlatformQuality(): Promise<DataPlatformQualityReport | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/data-platform/quality`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as DataPlatformQualityReport;
+  } catch {
+    return null;
+  }
+}
+
+/** 表级血缘：节点带层，边带建表步骤名。 */
+export async function getDataPlatformLineage(): Promise<DataPlatformLineage | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/data-platform/lineage`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as DataPlatformLineage;
+  } catch {
+    return null;
+  }
+}
+
+/** 单指标时间序列：右端取仓内最新业务日期，days 由后端夹在 1..90。 */
+export async function getDataPlatformMetricSeries(
+  key: string,
+  days = 14,
+): Promise<DataPlatformMetricSeries | null> {
+  try {
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}/api/v1/data-platform/metrics/${encodeURIComponent(key)}?days=${days}`,
+      { headers: await authHeaders(), cache: "no-store" },
+    );
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as DataPlatformMetricSeries;
+  } catch {
+    return null;
+  }
+}
+
+/** 问数示例：各自指向不同层级的表，用来教用户"什么时候该下探到明细"。 */
+export async function getNl2SqlExamples(): Promise<Nl2SqlExample[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/nl2sql/examples`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as Nl2SqlExample[];
+  } catch {
+    return [];
+  }
+}
+
+/** 自建 RAG：文档清单与覆盖率。检索走客户端代理，因为它是按需触发的。 */
+export async function getRagDocuments(): Promise<RagDocument[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/rag/documents`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as RagDocument[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getRagStats(): Promise<RagStats | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/rag/stats`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as RagStats;
+  } catch {
+    return null;
+  }
+}
+
+export async function getQaSummary(days = 30): Promise<QaSummary | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/qa/summary?days=${days}`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as QaSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function getQaLeaderboard(days = 30): Promise<QaLeaderboard | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/qa/leaderboard?days=${days}`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as QaLeaderboard;
+  } catch {
+    return null;
+  }
+}
+
+export async function getQaSessions(limit = 20, days?: number): Promise<QaSessions | null> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (days) {
+    query.set("days", String(days));
+  }
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/qa/sessions?${query}`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as QaSessions;
+  } catch {
+    return null;
+  }
+}
+
+export async function getCsSummary(): Promise<CsSummary | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/cs/summary`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as CsSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function getCsTickets(limit = 10): Promise<CsTicket[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/cs/tickets?limit=${limit}`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as CsTicket[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getCsFaq(): Promise<CsFaqItem[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/cs/faq`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as CsFaqItem[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getContractSummary(): Promise<ContractSummary | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/contracts/summary`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as ContractSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function getContracts(limit = 20): Promise<Contract[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/contracts?limit=${limit}`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as Contract[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getContractScoring(): Promise<ContractScoringRow[]> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/contracts/scoring`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as ContractScoringRow[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getLiveSummary(): Promise<LiveSummary | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/live/summary`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as LiveSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function getLiveSessions(limit = 10): Promise<LiveSession[]> {
+  try {
+    const listResponse = await fetchWithTimeout(
+      `${API_BASE_URL}/api/v1/live/sessions?limit=${limit}`,
+      { headers: await authHeaders(), cache: "no-store" },
+    );
+    if (!listResponse.ok) {
+      return [];
+    }
+    const items = (await listResponse.json()) as LiveSessionListItem[];
+    if (items.length === 0) {
+      return [];
+    }
+    // 列表不带切片，逐场取详情。场次是十几个量级，这里不做批量接口。
+    const details = await Promise.all(
+      items.map(async (item) => {
+        const response = await fetchWithTimeout(
+          `${API_BASE_URL}/api/v1/live/sessions/${item.id}`,
+          { headers: await authHeaders(), cache: "no-store" },
+        );
+        return response.ok ? ((await response.json()) as LiveSession) : null;
+      }),
+    );
+    return details.filter((item): item is LiveSession => item !== null);
+  } catch {
+    return [];
+  }
+}
+
+export async function getFinetuneSummary(): Promise<FinetuneSummary | null> {
+  try {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/api/v1/finetune/summary`, {
+      headers: await authHeaders(),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as FinetuneSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFinetuneDatasets(limit = 20): Promise<FinetuneDataset[]> {
+  try {
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}/api/v1/finetune/datasets?limit=${limit}`,
+      { headers: await authHeaders(), cache: "no-store" },
+    );
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as FinetuneDataset[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getFinetuneJobs(limit = 20): Promise<FinetuneJob[]> {
+  try {
+    const response = await fetchWithTimeout(
+      `${API_BASE_URL}/api/v1/finetune/jobs?limit=${limit}`,
+      { headers: await authHeaders(), cache: "no-store" },
+    );
+    if (!response.ok) {
+      return [];
+    }
+    return (await response.json()) as FinetuneJob[];
   } catch {
     return [];
   }

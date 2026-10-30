@@ -1,20 +1,11 @@
 "use client";
 
-import { Bell, BookOpen, Bot, ClipboardList, LayoutDashboard, LogOut, Menu, ScanText, Settings, X } from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { ThemeToggle } from "./theme-toggle";
-
-const NAV_ITEMS = [
-  { href: "/", label: "工作台", icon: LayoutDashboard },
-  { href: "/alerts", label: "待办中心", icon: Bell },
-  { href: "/agent", label: "Agent 中心", icon: Bot },
-  { href: "/imports", label: "导入中心", icon: ClipboardList },
-  { href: "/knowledge", label: "掌柜智库", icon: BookOpen },
-  { href: "/ocr", label: "图片取字", icon: ScanText },
-  { href: "/settings", label: "模型配置", icon: Settings },
-];
+import { NAV_ITEMS } from "@/lib/nav";
 
 type MobileNavProps = {
   userDisplayName: string | null;

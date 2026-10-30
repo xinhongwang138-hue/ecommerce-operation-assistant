@@ -855,3 +855,583 @@ export type KnowledgeCitation = {
   score?: number | null;
   document_id?: number | null;
 };
+
+/** 数据中台：最近一次跑批。 */
+export type DataPlatformRun = {
+  run_id: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  status: string;
+  ods_rows: number;
+  tables_built: number;
+  checks_passed: number;
+  checks_failed: number;
+};
+
+/** 数据中台：单张分层表。 */
+export type DataPlatformTable = {
+  name: string;
+  layer: string;
+  description: string;
+  row_count: number;
+};
+
+/** 数据中台：一层（ODS/DWD/DWS/ADS）。 */
+export type DataPlatformLayer = {
+  layer: string;
+  label: string;
+  tables: DataPlatformTable[];
+};
+
+/** 数据中台：全站近 7 天总览。 */
+export type DataPlatformSummary = {
+  window_start: string | null;
+  window_end: string | null;
+  gmv_7d: number;
+  spend_7d: number;
+  roas_7d: number | null;
+  ctr_7d: number | null;
+  cvr_7d: number | null;
+  aov_7d: number | null;
+  low_stock_ratio: number | null;
+  agent_success_rate: number | null;
+  asset_count: number;
+  product_count: number;
+  store_count: number;
+};
+
+export type DataPlatformOverview = {
+  ready: boolean;
+  run: DataPlatformRun | null;
+  layers: DataPlatformLayer[];
+  summary: DataPlatformSummary | null;
+  metric_count: number;
+  quality_passed: number;
+  quality_failed: number;
+};
+
+/** 数据中台：一条指标口径。 */
+export type DataPlatformMetric = {
+  key: string;
+  name: string;
+  unit: string;
+  direction: string;
+  layer: string;
+  source_table: string;
+  definition: string;
+  formula: string;
+};
+
+export type DataPlatformMetricPoint = {
+  period: string | null;
+  value: number | null;
+};
+
+export type DataPlatformMetricSeries = {
+  metric: DataPlatformMetric;
+  points: DataPlatformMetricPoint[];
+  has_data: boolean;
+};
+
+/** 数据中台：一条质量校验结果。 */
+export type DataPlatformQualityCheck = {
+  key: string;
+  name: string;
+  layer: string;
+  table: string;
+  severity: string;
+  observed: number;
+  passed: boolean;
+  expectation: string;
+};
+
+export type DataPlatformQualityReport = {
+  run_id: string | null;
+  checked_at: string | null;
+  passed: number;
+  failed: number;
+  checks: DataPlatformQualityCheck[];
+};
+
+/** 数据中台：表级血缘。 */
+export type DataPlatformLineage = {
+  nodes: { name: string; layer: string }[];
+  edges: { source: string; target: string; step: string }[];
+  upstream: Record<string, string[]>;
+};
+
+export type DataPlatformQueryResult = {
+  columns: string[];
+  rows: (string | number | null)[][];
+  row_count: number;
+  truncated: boolean;
+  max_rows: number;
+  elapsed_ms: number;
+};
+
+/** 问数：一次自然语言提问的完整结果。 */
+export type Nl2SqlAnswer = {
+  question: string;
+  sql: string;
+  explanation: string;
+  assumptions: string[];
+  confidence: number;
+  columns: string[];
+  rows: (string | number | null)[][];
+  row_count: number;
+  truncated: boolean;
+  max_rows: number;
+  attempts: number;
+  elapsed_ms: number;
+};
+
+export type Nl2SqlExample = {
+  question: string;
+  table: string;
+  note: string;
+};
+
+/** 自建 RAG：一篇入库的文本。 */
+export type RagDocument = {
+  id: number;
+  title: string;
+  source_kind: "text" | "markdown";
+  char_count: number;
+  chunk_count: number;
+  embedded_chunks: number;
+  embedding_model: string | null;
+  created_at: string;
+};
+
+export type RagStats = {
+  documents: number;
+  chunks: number;
+  embedded_chunks: number;
+  embedding_coverage: number;
+  embedding_configured: boolean;
+  embedding_model: string | null;
+};
+
+export type RagIngestResult = {
+  document: RagDocument;
+  warnings: string[];
+};
+
+export type RagHit = {
+  citation: {
+    document_id: number;
+    document_title: string;
+    ordinal: number;
+    char_start: number;
+    char_end: number;
+  };
+  content: string;
+  snippet: string;
+  score: number;
+  lexical_rank: number | null;
+  vector_rank: number | null;
+  matched_terms: string[];
+};
+
+export type RagSearchResult = {
+  query: string;
+  hits: RagHit[];
+  lexical_hits: number;
+  vector_hits: number;
+  vector_enabled: boolean;
+  warnings: string[];
+  elapsed_ms: number;
+};
+
+// --- P09 销售考核 -----------------------------------------------------------
+
+export type QaEvidence = {
+  seq: number;
+  role: string;
+  excerpt: string;
+  note: string;
+};
+
+export type QaRuleScore = {
+  key: string;
+  title: string;
+  dimension: string;
+  max_score: number;
+  score: number;
+  passed: boolean;
+  detail: string;
+  advice: string;
+  evidence: QaEvidence[];
+};
+
+export type QaScore = {
+  total: number;
+  grade: string;
+  redline: boolean;
+  redline_rules: string[];
+  rule_version: string;
+  scored_at: string | null;
+  breakdown: QaRuleScore[];
+};
+
+export type QaRedlineEvidence = {
+  key: string;
+  title: string;
+  seq: number;
+  excerpt: string;
+  phrase: string;
+};
+
+export type QaMessage = {
+  seq: number;
+  role: string;
+  content: string;
+  sent_at: string | null;
+};
+
+export type QaSessionItem = {
+  id: number;
+  external_id: string;
+  agent_name: string;
+  channel: string;
+  source_kind: string;
+  started_at: string;
+  message_count: number;
+  total: number | null;
+  grade: string | null;
+  redline: boolean;
+};
+
+export type QaSessions = {
+  items: QaSessionItem[];
+  total: number;
+  average: number | null;
+};
+
+export type QaSummary = {
+  sessions: number;
+  scored: number;
+  unscored: number;
+  average: number | null;
+  agents: number;
+  redline_sessions: number;
+  grade_distribution: Record<string, number>;
+  days: number;
+  rule_version: string;
+};
+
+export type QaLeaderboardRow = {
+  agent_name: string;
+  sessions: number;
+  average: number;
+  best: number;
+  worst: number;
+  a_count: number;
+  redline_count: number;
+};
+
+export type QaLeaderboard = {
+  days: number;
+  rows: QaLeaderboardRow[];
+  total_sessions: number;
+};
+
+export type QaReport = {
+  session: QaSessionItem;
+  messages: QaMessage[];
+  score: QaScore;
+  redline_evidence: QaRedlineEvidence[];
+  weakest: QaRuleScore | null;
+  suggestions: string[];
+};
+
+// --- P01 AI 电商客服 --------------------------------------------------------
+
+export type CsTrack = "handoff" | "faq" | "retrieval" | "refuse";
+
+export type CsCitation = {
+  kind: "faq" | "rag";
+  label: string;
+  snippet: string;
+  score: number | null;
+};
+
+export type CsTicketBrief = {
+  id: number;
+  trigger: string;
+  priority: string;
+  reason: string;
+};
+
+export type CsChatResult = {
+  conversation_id: number;
+  track: CsTrack;
+  reply: string;
+  citations: CsCitation[];
+  handoff: CsTicketBrief | null;
+  reason: string;
+  refuse_reason: string;
+};
+
+export type CsTicket = {
+  id: number;
+  conversation_id: number;
+  reason: string;
+  trigger: string;
+  priority: string;
+  status: string;
+  summary: string | null;
+  created_at: string;
+  closed_at: string | null;
+};
+
+export type CsFaqItem = {
+  key: string;
+  category: string;
+  question: string;
+  answer: string;
+};
+
+export type CsSummary = {
+  conversations: number;
+  messages: number;
+  handoff_tickets: number;
+  open_tickets: number;
+  tracks: { track: string; count: number }[];
+  faq_items: number;
+};
+
+// --- P05 合同审批 -----------------------------------------------------------
+
+export type ContractClause = {
+  ordinal: number;
+  heading: string;
+  text: string;
+  kind: string;
+  kind_title: string;
+  char_start: number;
+  char_end: number;
+};
+
+export type ContractRisk = {
+  id: number;
+  rule_key: string;
+  severity: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  quote: string;
+  source: "rule" | "llm";
+  suggestion: string;
+  clause_ordinal: number | null;
+  clause_kind: string;
+  clause_kind_title: string;
+};
+
+export type ContractApproval = {
+  id: number;
+  decision: string;
+  comment: string;
+  decided_by_user_id: number | null;
+  decided_at: string;
+  risk_snapshot: {
+    rule_key: string;
+    severity: string;
+    title: string;
+    quote: string;
+    source: string;
+    clause_ordinal: number | null;
+  }[];
+};
+
+export type Contract = {
+  id: number;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: "uploaded" | "extracted" | "reviewed" | "failed";
+  extract_error: string | null;
+  risk_score: number;
+  rule_score: number;
+  semantic_score: number;
+  risk_level: "low" | "medium" | "high";
+  clause_count: number;
+  risk_count: number;
+  high_risk_count: number;
+  semantic_checked: boolean;
+  summary: string | null;
+  rule_version: string;
+  reviewed_at: string | null;
+  created_at: string;
+  clauses: ContractClause[];
+  risks: ContractRisk[];
+  approvals: ContractApproval[];
+};
+
+export type ContractUploadResult = {
+  id: number;
+  filename: string;
+  status: string;
+  clause_count: number;
+  risk_count: number;
+  high_risk_count: number;
+  risk_score: number;
+  risk_level: string;
+  duplicate_of: number | null;
+};
+
+export type ContractSemanticResult = {
+  id: number;
+  semantic_checked: boolean;
+  summary: string | null;
+  added: number;
+  dropped: number;
+  dropped_reason: string;
+  risk_count: number;
+  high_risk_count: number;
+  risk_score: number;
+  risk_level: string;
+};
+
+export type ContractSummary = {
+  contracts: number;
+  reviewed: number;
+  pending_semantic: number;
+  high_risk: number;
+  approvals: number;
+  average_score: number;
+  by_level: Record<string, number>;
+  by_risk_key: { rule_key: string; count: number }[];
+};
+
+export type ContractScoringRow = {
+  kind: "weight" | "cap" | "threshold";
+  severity: string;
+  value: number;
+  note: string;
+};
+
+// --- P08 直播切片 -----------------------------------------------------------
+
+export type LiveClip = {
+  id: number;
+  session_id: number;
+  start_seconds: number;
+  end_seconds: number;
+  title: string;
+  hook: string;
+  transcript: string;
+  score: number;
+  reasons: string[];
+  status: "suggested" | "approved" | "rejected";
+  decided_at: string | null;
+};
+
+export type LiveSession = {
+  id: number;
+  title: string;
+  product_name: string;
+  duration_seconds: number;
+  status: string;
+  clip_count: number;
+  rule_version: string;
+  created_at: string;
+  clips: LiveClip[];
+};
+
+export type LiveSessionListItem = {
+  id: number;
+  title: string;
+  product_name: string;
+  duration_seconds: number;
+  status: string;
+  clip_count: number;
+  created_at: string;
+};
+
+export type LiveSummary = {
+  sessions: number;
+  segments: number;
+  clips: number;
+  approved: number;
+  rejected: number;
+  average_score: number;
+  by_status: { status: string; count: number }[];
+};
+
+// --- P10 模型微调平台 -------------------------------------------------------
+
+export type FinetuneSample = {
+  id: number;
+  source: string;
+  source_ref: string;
+  quality: string;
+  fingerprint: string;
+  tags: string[];
+  messages: { role: string; content: string }[];
+};
+
+export type FinetuneDataset = {
+  id: number;
+  name: string;
+  task_type: string;
+  status: string;
+  sample_count: number;
+  stats: {
+    by_source?: Record<string, number>;
+    by_quality?: Record<string, number>;
+    average_chars?: number;
+    max_chars?: number;
+    min_chars?: number;
+    builder_version?: string;
+    /** 去重丢掉的条数 */
+    duplicates?: number;
+    /** 去重丢掉的部分来自哪一侧（qa / cs），"客服会话怎么少了一条"要能查 */
+    duplicates_by_source?: Record<string, number>;
+    /** 没进数据集的原因 → 条数。静默丢弃会让"客服侧没数据"这种误判无从发现。 */
+    skipped?: Record<string, number>;
+  };
+  builder_version: string;
+  exported_at: string | null;
+  created_at: string;
+  samples?: FinetuneSample[];
+};
+
+export type FinetuneJob = {
+  id: number;
+  dataset_id: number;
+  name: string;
+  base_model: string;
+  params: Record<string, unknown>;
+  status: string;
+  metrics: Record<string, unknown>;
+  eval_summary: {
+    cases?: number;
+    base_average?: number;
+    tuned_average?: number;
+    delta?: number;
+    wins?: number;
+    losses?: number;
+    ties?: number;
+    note?: string;
+    detail?: {
+      question: string;
+      base_score: number;
+      tuned_score: number;
+      delta: number;
+      note: string;
+    }[];
+  };
+  note: string;
+  finished_at: string | null;
+  created_at: string;
+};
+
+export type FinetuneSummary = {
+  datasets: number;
+  samples: number;
+  jobs: number;
+  by_source: { key: string; title: string; count: number }[];
+  by_quality: { key: string; title: string; count: number }[];
+  by_status: { key: string; title: string; count: number }[];
+};
