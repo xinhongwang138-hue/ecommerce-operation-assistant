@@ -8,9 +8,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
@@ -18,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.routes import finetune as finetune_routes
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
 from app.finetune import builders, service
@@ -562,3 +566,138 @@ def test_viewer_can_read_but_cannot_build(engine, db, tenant):
 
     assert readable.status_code == 200
     assert forbidden.status_code == 403
+
+
+# --- 外部训练服务的回写 -------------------------------------------------------
+# 这条路不认用户令牌，只认 HMAC。三条边界必须钉住：
+# 没配密钥时不能变成"谁都能写"，签名不对要 401，终态不能被悄悄改回 running。
+
+
+SECRET = "test-callback-secret"
+
+
+def _sign(secret: str, job_id: int, raw: bytes) -> str:
+    return hmac.new(secret.encode(), f"{job_id}.".encode() + raw, hashlib.sha256).hexdigest()
+
+
+def _callback(client: TestClient, job_id: int, body: dict, *, secret: str = SECRET, signature: str | None = None):
+    raw = json.dumps(body, ensure_ascii=False).encode()
+    return client.post(
+        f"{BASE}/jobs/{job_id}/callback",
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Finetune-Signature": signature if signature is not None else _sign(secret, job_id, raw),
+        },
+    )
+
+
+@pytest.fixture()
+def callback_ready(monkeypatch):
+    monkeypatch.setattr(
+        finetune_routes, "get_settings", lambda: SimpleNamespace(finetune_callback_secret=SECRET)
+    )
+
+
+def _registered_job(db, tenant):
+    dataset = _dataset(db, tenant)
+    return service.register_job(
+        db, tenant.workspace_id,
+        payload=JobCreate(dataset_id=dataset.id, name="sft-1", base_model="qwen-plus"),
+    )
+
+
+def test_callback_is_disabled_when_no_secret_is_configured(engine, db, tenant, monkeypatch):
+    """没配密钥就 503，而不是默默放行——这个接口能改台账，等于凭据。"""
+    monkeypatch.setattr(
+        finetune_routes, "get_settings", lambda: SimpleNamespace(finetune_callback_secret=None)
+    )
+    job = _registered_job(db, tenant)
+
+    response = _callback(client(engine, tenant.user), job.id, {"status": "running"})
+
+    assert response.status_code == 503
+    assert "FINETUNE_CALLBACK_SECRET" in response.json()["detail"]
+
+
+def test_callback_rejects_a_bad_signature(engine, db, tenant, callback_ready):
+    job = _registered_job(db, tenant)
+
+    response = _callback(client(engine, tenant.user), job.id, {"status": "running"}, signature="deadbeef")
+
+    assert response.status_code == 401
+
+
+def test_callback_signature_is_bound_to_the_job_id(engine, db, tenant, callback_ready):
+    """签名里带上 job_id：截获一条回调也改不了别的作业。"""
+    dataset = _dataset(db, tenant)
+    first = service.register_job(
+        db, tenant.workspace_id,
+        payload=JobCreate(dataset_id=dataset.id, name="sft-1", base_model="qwen-plus"),
+    )
+    second = service.register_job(
+        db, tenant.workspace_id,
+        payload=JobCreate(dataset_id=dataset.id, name="sft-2", base_model="qwen-plus"),
+    )
+    raw = json.dumps({"status": "running"}).encode()
+
+    response = client(engine, tenant.user).post(
+        f"{BASE}/jobs/{second.id}/callback",
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Finetune-Signature": _sign(SECRET, first.id, raw),
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_callback_walks_registered_to_running_to_succeeded(engine, db, tenant, callback_ready):
+    job = _registered_job(db, tenant)
+    api = client(engine, tenant.user)
+
+    assert _callback(api, job.id, {"status": "running"}).status_code == 200
+    done = _callback(api, job.id, {"status": "succeeded", "metrics": {"loss": 0.8}})
+
+    assert done.status_code == 200
+    payload = done.json()
+    assert payload["status"] == "succeeded"
+    assert payload["metrics"] == {"loss": 0.8}
+    assert payload["finished_at"] is not None
+
+
+def test_callback_is_idempotent_and_keeps_the_first_metrics(engine, db, tenant, callback_ready):
+    """训练框架会用重试和超时重发，同一个状态到两次很正常。第二次不能清空指标。"""
+    job = _registered_job(db, tenant)
+    api = client(engine, tenant.user)
+    _callback(api, job.id, {"status": "running"})
+
+    first = _callback(api, job.id, {"status": "succeeded", "metrics": {"loss": 0.8}})
+    second = _callback(api, job.id, {"status": "succeeded", "metrics": {}})
+
+    assert first.json()["metrics"] == {"loss": 0.8}
+    assert second.status_code == 200
+    assert second.json()["metrics"] == {"loss": 0.8}
+    assert second.json()["finished_at"] == first.json()["finished_at"]
+
+
+def test_callback_cannot_reopen_a_finished_job(engine, db, tenant, callback_ready):
+    """已完成又被回写成 running，说明两边认知不一致，宁可 409 也别让台账改口。"""
+    job = _registered_job(db, tenant)
+    api = client(engine, tenant.user)
+    _callback(api, job.id, {"status": "running"})
+    _callback(api, job.id, {"status": "failed"})
+
+    response = _callback(api, job.id, {"status": "running"})
+
+    assert response.status_code == 409
+    assert "新登记" in response.json()["detail"]
+
+
+def test_callback_refuses_an_unknown_status(engine, db, tenant, callback_ready):
+    job = _registered_job(db, tenant)
+
+    response = _callback(client(engine, tenant.user), job.id, {"status": "half-done"})
+
+    assert response.status_code == 400

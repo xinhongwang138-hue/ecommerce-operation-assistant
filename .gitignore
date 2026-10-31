@@ -30,3 +30,6 @@ SECURITY_AUDIT.md
 api/warehouse/*.duckdb
 api/warehouse/*.duckdb.wal
 api/.pytest-tmp/
+
+# 微调执行器的落地目录：数据集副本、训练日志与产物，全是可重跑的运行时文件
+api/finetune-runs/

@@ -57,6 +57,18 @@ class JobUpdate(BaseModel):
     note: str = ""
 
 
+class CallbackRequest(BaseModel):
+    """外部训练服务的回写。
+
+    只有三个字段：跑成没跑成、跑出什么指标、留一句话。平台不接收训练框架的日志流，
+    也不解析 loss 曲线——那些属于训练机，不属于台账。
+    """
+
+    status: str
+    metrics: dict = Field(default_factory=dict)
+    note: str = ""
+
+
 class EvalCase(BaseModel):
     question: str
     base_score: float

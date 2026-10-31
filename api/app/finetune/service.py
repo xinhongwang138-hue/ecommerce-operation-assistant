@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.finetune import builders
 from app.finetune.schemas import (
+    CallbackRequest,
     DatasetDetail,
     DatasetRead,
     EvalRequest,
@@ -216,6 +217,63 @@ def update_job(db: Session, workspace_id: int, job_id: int, *, payload: JobUpdat
     if payload.status not in JOB_STATUSES:
         raise FinetuneError(f"status 只接受 {'/'.join(JOB_STATUSES)}", status_code=400)
     job = _load_job(db, workspace_id, job_id)
+
+    job.status = FinetuneJobStatus(payload.status)
+    if payload.metrics:
+        job.metrics = payload.metrics
+    if payload.note:
+        job.note = payload.note
+    if payload.status in (FinetuneJobStatus.SUCCEEDED.value, FinetuneJobStatus.FAILED.value):
+        job.finished_at = func.now()
+    db.commit()
+    db.refresh(job)
+    return JobRead.model_validate(job)
+
+
+# 状态机。终态是终态：同一个作业不重复跑，要重跑就再登记一条，旧的留在台账里。
+# 允许"直接 registered → failed"是因为启动训练器立刻失败（命令不存在、显存不够）
+# 也是一种真实结局，不该逼着先改成 running 再改 failed 去凑一个不存在的中间态。
+ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "registered": {"running", "failed"},
+    "running": {"succeeded", "failed"},
+    "succeeded": set(),
+    "failed": set(),
+}
+
+
+def get_job(db: Session, workspace_id: int, job_id: int) -> JobRead:
+    return JobRead.model_validate(_load_job(db, workspace_id, job_id))
+
+
+def apply_callback(db: Session, job_id: int, *, payload: CallbackRequest) -> JobRead:
+    """外部训练服务的回写。
+
+    三件事值得单独说：
+
+    **幂等。** 训练框架的重试、网络超时重发都会让同一个状态到达两次。第二次什么都不改——
+    尤其是 `metrics`，不能被后来的空 payload 覆盖成 `{}`。
+
+    **状态机。** 已完成的任务被回写成 running，说明两边对同一件事的认知不一致，
+    宁可 409 报出来，也不要让台账悄悄改口。
+
+    **不认租户。** 这条路靠 HMAC 认人，作业 id 就是它知道的一切；
+    跨租户的读取仍然走用户身份那套。
+    """
+    job = db.scalar(select(FinetuneJob).where(FinetuneJob.id == job_id))
+    if job is None:
+        raise FinetuneError("任务不存在", status_code=404)
+    if payload.status not in JOB_STATUSES:
+        raise FinetuneError(f"status 只接受 {'/'.join(JOB_STATUSES)}", status_code=400)
+
+    current = job.status.value
+    if payload.status == current:
+        # 重复回写：不改任何字段，包括 metrics 与 finished_at
+        return JobRead.model_validate(job)
+    if payload.status not in ALLOWED_TRANSITIONS[current]:
+        raise FinetuneError(
+            f"任务已经是 {current}，不能再变成 {payload.status}；要重跑请新登记一条",
+            status_code=409,
+        )
 
     job.status = FinetuneJobStatus(payload.status)
     if payload.metrics:

@@ -116,6 +116,14 @@ class Settings(BaseSettings):
     warehouse_dir: str = Field(default=str(API_DIR / "warehouse"), alias="WAREHOUSE_DIR")
     warehouse_query_max_rows: int = Field(default=500, alias="WAREHOUSE_QUERY_MAX_ROWS")
 
+    # 微调作业回写（P10）。外部训练服务跑完 POST 回来，用 HMAC 签名而不是用户 token：
+    # 训练机不该长期握着一个能读整个租户数据的令牌，它只需要"改这一条作业"的权限。
+    # 密钥为空时回调接口直接 503——不能因为没配就变成谁都能写的入口。
+    finetune_callback_secret: str | None = Field(default=None, alias="FINETUNE_CALLBACK_SECRET")
+    # 训练命令模板。{jsonl} / {output} / {base_model} / {job_id} 会被替换成实际值。
+    # 平台自己不训练：这里指向真正的训练器（llamafactory、torchrun、云上 CLI 都行）。
+    finetune_train_command: str | None = Field(default=None, alias="FINETUNE_TRAIN_COMMAND")
+
     #核心方法是读取本地的.env文件覆盖当前对象中的变量值 
     # 推荐写成绝对路径的形式 指定固定的.env文件
     # 逐个加载：.env 为基线（对齐 docker-compose），.env.local 为可选的本机覆盖（后者优先）。
