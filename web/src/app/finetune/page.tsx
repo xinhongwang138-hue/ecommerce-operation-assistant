@@ -1,4 +1,4 @@
-import { Cpu, Database, FlaskConical, Layers } from "lucide-react";
+import { Cpu, Database, FlaskConical, Layers, Plug } from "lucide-react";
 
 import { FinetunePanel } from "@/components/finetune-panel";
 import { StatusBadge } from "@/components/ui";
@@ -96,6 +96,42 @@ export default async function FinetunePage() {
       </section>
 
       <FinetunePanel datasets={datasets} jobs={jobs} />
+
+      <section className="card p-4">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-[var(--foreground)]">
+          <Plug className="h-4 w-4" /> 怎么把训练接进来
+        </h2>
+        <p className="mt-1 text-[11px] leading-relaxed text-[var(--muted-foreground)]">
+          平台不训练，但留了两个缝：一条回调让训练机把结果写回台账，一个执行器把
+          「导出数据 → 调训练器 → 回写状态」串起来。任何能吃 JSONL、吐目录的训练器都能接。
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="rounded-md border border-[var(--border)] bg-[var(--muted)] p-3">
+            <p className="text-[11px] font-semibold text-[var(--foreground)]">回调（HMAC 签名）</p>
+            <p className="mt-1 break-all font-mono text-[10px] text-[var(--muted-foreground)]">
+              POST /api/v1/finetune/jobs/&lt;job_id&gt;/callback
+            </p>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+              签名覆盖 <span className="font-mono">&lt;job_id&gt;.</span> 加上原样请求体，放在
+              <span className="font-mono"> X-Finetune-Signature</span>。密钥是
+              <span className="font-mono"> FINETUNE_CALLBACK_SECRET</span>；没配就 503，
+              不会因为没配而变成谁都能写。
+            </p>
+          </div>
+          <div className="rounded-md border border-[var(--border)] bg-[var(--muted)] p-3">
+            <p className="text-[11px] font-semibold text-[var(--foreground)]">执行器</p>
+            <p className="mt-1 break-all font-mono text-[10px] text-[var(--muted-foreground)]">
+              python api/scripts/run_finetune_job.py --job &lt;id&gt;
+            </p>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--muted-foreground)]">
+              训练命令由 <span className="font-mono">FINETUNE_TRAIN_COMMAND</span> 决定，
+              占位符 <span className="font-mono">{"{jsonl}"} {"{output}"} {"{base_model}"}</span>。
+              仓库里附了一个 <span className="font-mono">standin_trainer.py</span>，
+              只校验数据不训模型，用来验证这条缝是否打通。
+            </p>
+          </div>
+        </div>
+      </section>
 
       <section className="grid gap-4 md:grid-cols-3">
         {principles.map((item) => (

@@ -56,9 +56,18 @@ export function FinetunePanel({
 
   const [jobName, setJobName] = useState("sft-v1");
   const [baseModel, setBaseModel] = useState("qwen-plus");
-  const [datasetId, setDatasetId] = useState<number | null>(datasets[0]?.id ?? null);
+  // 选中项不能只在挂载时算一次：建完新数据集会 router.refresh()，props 换成新的数组，
+  // 而 useState 的初值不会重算——下拉还指着上一条，登记出来的作业挂错数据集，且不报错。
+  // 所以存"人选了哪个"，实际用哪个由当前列表推导：选项消失就退回最新一条。
+  const [pickedDatasetId, setPickedDatasetId] = useState<number | null>(null);
+  const datasetId = datasets.some((item) => item.id === pickedDatasetId)
+    ? pickedDatasetId
+    : (datasets[0]?.id ?? null);
 
-  const [evalJobId, setEvalJobId] = useState<number | null>(jobs[0]?.id ?? null);
+  const [pickedJobId, setPickedJobId] = useState<number | null>(null);
+  const evalJobId = jobs.some((item) => item.id === pickedJobId)
+    ? pickedJobId
+    : (jobs[0]?.id ?? null);
   const [evalRows, setEvalRows] = useState("还有货吗,60,85\n能退吗,70,65");
 
   function flash(message: string | null, kind: "ok" | "err" = "ok") {
@@ -116,13 +125,18 @@ export function FinetunePanel({
         base_model: baseModel,
       }),
     }).catch(() => null);
-    const payload = (await response?.json().catch(() => null)) as { error?: string } | null;
+    const payload = (await response?.json().catch(() => null)) as
+      | { error?: string; id?: number }
+      | null;
     setBusy(null);
     if (!response?.ok) {
       flash(payload?.error ?? "登记失败", "err");
       return;
     }
-    flash("已登记。真正训练由外部服务执行，这里只记台账。");
+    // 登记完直接给出开跑命令：平台不训练，但得让人知道下一步敲什么
+    flash(
+      `已登记 #${payload?.id ?? "?"}。开跑：python api/scripts/run_finetune_job.py --job ${payload?.id ?? "<id>"}`,
+    );
     router.refresh();
   }
 
@@ -237,7 +251,7 @@ export function FinetunePanel({
           <div className="mt-2 flex flex-col gap-2">
             <select
               value={datasetId ?? ""}
-              onChange={(event) => setDatasetId(Number(event.target.value) || null)}
+              onChange={(event) => setPickedDatasetId(Number(event.target.value) || null)}
               className="rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
             >
               <option value="">选择数据集</option>
@@ -420,7 +434,7 @@ export function FinetunePanel({
           <div className="mt-2 flex flex-wrap items-start gap-2">
             <select
               value={evalJobId ?? ""}
-              onChange={(event) => setEvalJobId(Number(event.target.value) || null)}
+              onChange={(event) => setPickedJobId(Number(event.target.value) || null)}
               className="rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1.5 text-xs text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
             >
               <option value="">选择任务</option>

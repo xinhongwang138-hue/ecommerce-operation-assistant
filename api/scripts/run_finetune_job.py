@@ -38,6 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.finetune import service as ft_service
 from app.models import FinetuneJob
@@ -70,11 +71,27 @@ def post_callback(api: str, secret: str, job_id: int, payload: dict) -> tuple[in
         return exc.code, exc.read().decode("utf-8", "replace")
 
 
-def build_command(template: str, *, jsonl: Path, output: Path, base_model: str, job_id: int) -> str:
+def split_command(command: str) -> list[str]:
+    """切分命令。Windows 上不能用 shlex 的 POSIX 模式：它把反斜杠当转义，
+    `D:////learning////...` 会被啃成 `D:learning...`，训练器一启动就"数据集不存在"（实测踩到）。
+    posix=False 保留反斜杠与引号，再把成对引号剥掉就对了。
+    """
+    if os.name == "nt":
+        return [token.strip('"') for token in shlex.split(command, posix=False)]
+    return shlex.split(command)
+
+
+def build_command(
+    template: str, *, jsonl: Path, output: Path, base_model: str, job_id: int, api_root: Path
+) -> str:
     """模板替换。用 str.replace 而不是 .format：训练命令里常带 `{}`（JSON 参数、日志格式），
-    format 会把它们当占位符直接炸掉。"""
+    format 会把它们当占位符直接炸掉。
+
+    `{api_root}` 是给随仓库附带的脚本用的：命令在 job 目录里执行，相对路径会指到别处。
+    """
     return (
-        template.replace("{jsonl}", str(jsonl))
+        template.replace("{api_root}", str(api_root).replace("\\", "/"))
+        .replace("{jsonl}", str(jsonl))
         .replace("{output}", str(output))
         .replace("{base_model}", base_model)
         .replace("{job_id}", str(job_id))
@@ -93,7 +110,9 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=int(os.getenv("FINETUNE_TRAIN_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
     args = parser.parse_args()
 
-    secret = os.getenv("FINETUNE_CALLBACK_SECRET", "").strip()
+    # 环境变量优先，其次读 .env.local（和服务共用一份配置，不用两处维护同一个密钥）
+    settings = get_settings()
+    secret = (os.getenv("FINETUNE_CALLBACK_SECRET") or settings.finetune_callback_secret or "").strip()
     if not secret:
         print("缺少 FINETUNE_CALLBACK_SECRET：没有它就无法把结果写回台账，先别跑。")
         return 1
@@ -122,7 +141,7 @@ def main() -> int:
 
     print(f"数据集已导出：{jsonl_path}（{payload.count(chr(10))} 行）")
 
-    template = os.getenv("FINETUNE_TRAIN_COMMAND", "").strip()
+    template = (os.getenv("FINETUNE_TRAIN_COMMAND") or settings.finetune_train_command or "").strip()
     if not template:
         note = "未配置 FINETUNE_TRAIN_COMMAND，无法启动训练"
         print(note)
@@ -130,7 +149,15 @@ def main() -> int:
         print(f"  回写 {code} {body[:200]}")
         return 3
 
-    command = build_command(template, jsonl=jsonl_path, output=output_dir, base_model=base_model, job_id=args.job)
+    api_root = Path(__file__).resolve().parents[1]
+    command = build_command(
+        template,
+        jsonl=jsonl_path,
+        output=output_dir,
+        base_model=base_model,
+        job_id=args.job,
+        api_root=api_root,
+    )
     print(f"训练命令：{command}")
 
     code, body = post_callback(args.api, secret, args.job, {"status": "running", "metrics": {}, "note": "执行器已启动"})
@@ -141,7 +168,7 @@ def main() -> int:
     started = time.monotonic()
     try:
         completed = subprocess.run(  # noqa: S603 - 命令来自运维配置，不是外部输入
-            shlex.split(command),
+            split_command(command),
             cwd=str(run_dir),
             capture_output=True,
             text=True,
