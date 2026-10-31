@@ -92,6 +92,50 @@ def test_cut_finds_the_selling_window():
     assert best.end <= 58
 
 
+def test_trailing_farewell_never_lands_at_the_end_of_a_clip():
+    """往右扩到够长就停，不判断那句是不是在道别——实测「我们下次见」进了候选结尾。"""
+    raw = [
+        {"start": 0, "end": 5, "text": "到手价只要 79。"},
+        {"start": 5, "end": 10, "text": "限量 100 件。"},
+        {"start": 10, "end": 15, "text": "抢完就下架。"},
+        {"start": 15, "end": 20, "text": "我们下次见。"},
+    ]
+
+    clips = rules.cut(_segments(raw))
+
+    assert clips
+    assert all("我们下次见" not in item.transcript for item in clips)
+    # 削掉道别后不足 12 秒，会往左补一句回来，所以时长仍然合规
+    assert all(item.end - item.start >= rules.MIN_SECONDS for item in clips)
+
+
+def test_farewell_is_kept_when_cutting_it_would_leave_a_fragment():
+    """补不出来时宁可多带一句道别，也别交出 8 秒碎片——碎片讲不完一个卖点。"""
+    raw = [
+        {"start": 0, "end": 6, "text": "到手价只要 79。"},
+        {"start": 6, "end": 12, "text": "我们下次见。"},
+    ]
+
+    clips = rules.cut(_segments(raw))
+
+    assert clips
+    assert "我们下次见" in clips[0].transcript
+    assert not any("已剔掉" in reason for reason in clips[0].reasons)
+
+
+def test_closing_sentence_that_carries_a_selling_point_is_not_trimmed():
+    """边界那句本身可能是锚点，削掉就把卖点削没了。"""
+    raw = [
+        {"start": 0, "end": 5, "text": "到手价只要 79。"},
+        {"start": 5, "end": 10, "text": "限量 100 件。"},
+        {"start": 10, "end": 16, "text": "谢谢大家，我们下次见，到手价 79。"},
+    ]
+
+    clips = rules.cut(_segments(raw))
+
+    assert any("谢谢大家" in item.transcript for item in clips)
+
+
 def test_cut_does_not_pick_pure_small_talk():
     clips = rules.cut(_segments())
     tops = [item for item in clips if item.score >= 60]

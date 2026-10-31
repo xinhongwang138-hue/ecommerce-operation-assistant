@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-RULE_VERSION = "1.0.0"
+RULE_VERSION = "1.0.1"
 
 # 短视频的黄金区间。短于 12 秒讲不完一个卖点，长于 60 秒完播率会掉。
 MIN_SECONDS = 12
@@ -50,6 +50,24 @@ CTA_WORDS = ("下单", "点击", "购物车", "小黄车", "拍下", "去拍", "
 # 与切片无关的口播：寒暄、报时、催关注之外的闲聊。命中这些不直接扣分，
 # 但会让"密度"分母变大——这正是我们想要的。
 _FILLER = ("大家好", "欢迎", "稍等", "不好意思", "网络", "卡了", "听得到吗", "扣个 1")
+
+# 收尾水词。时间窗只会一路往右扩到"够长"，停下来时不判断那句是在道别还是在讲卖点——
+# 实测把「我们下次见」带进了候选结尾，剪辑师得自己改时间码。
+# 只削尾巴不削开头：往右扩会冲过头，往左补不会（左补是"补到够长就停"，天然不越界）。
+_CLOSING_FILLER = (
+    "我们下次见",
+    "下次见",
+    "再见",
+    "拜拜",
+    "谢谢大家",
+    "谢谢观看",
+    "今天就到这里",
+    "下播",
+    "晚安",
+    "稍后再讲",
+    "接着说下一个",
+    "下一个品",
+)
 
 # 打分权重，和上面四组一一对应。合计 100。
 WEIGHTS = {"density": 40, "hook": 20, "cta": 20, "duration": 20}
@@ -128,7 +146,8 @@ def cut(segments: list[Segment], *, limit: int = MAX_CLIPS) -> list[Candidate]:
         window = _expand(segments, index)
         if window is None:
             continue
-        candidate = _build(segments, window[0], window[1])
+        left, right, trimmed = _tidy(segments, window[0], window[1])
+        candidate = _build(segments, left, right, trimmed=trimmed)
         if candidate is not None:
             candidates.append(candidate)
 
@@ -166,7 +185,46 @@ def _expand(segments: list[Segment], anchor: int) -> tuple[int, int] | None:
     return left, right
 
 
-def _build(segments: list[Segment], left: int, right: int) -> Candidate | None:
+def _tidy(segments: list[Segment], left: int, right: int) -> tuple[int, int, bool]:
+    """削掉尾巴上的道别句，返回新的右端点和"是否真的动过"。
+
+    三条自我约束：
+
+    一，**不动含卖点词的句子**。边界那句本身可能就是锚点（"买完记得关注，到手价 79"），
+       削掉就把卖点削没了。
+    二，**削短了先往左补**。切片必须是连续区间，不能跳过中间那句，所以补只能往左长。
+       实测 3:44-3:59 那条：削掉「我们下次见」只剩 10 秒（低于 12 秒下限），
+       往左补一句「过点恢复 199」就回到 15 秒，两边都不用将就。
+    三，**补不出来就整个退回**。宁可多带一句道别，也不要交出 8 秒的碎片——
+       短片段完播率高但讲不完一个卖点，那才是真的没用。
+    """
+    original = (left, right)
+    while right > left and _is_closing(segments[right].text):
+        right -= 1
+
+    if (left, right) == original:
+        return left, right, False
+
+    while left > 0 and segments[right].end - segments[left].start < MIN_SECONDS:
+        if segments[right].end - segments[left - 1].start > MAX_SECONDS:
+            break
+        left -= 1
+
+    # 补回原来的位置等于没削，就别声称削过
+    if (left, right) == original or segments[right].end - segments[left].start < MIN_SECONDS:
+        return original[0], original[1], False
+    return left, right, True
+
+
+def _is_closing(text: str) -> bool:
+    if _selling_hits(text):
+        return False
+    return any(word in text for word in _CLOSING_FILLER)
+
+
+def _build(
+    segments: list[Segment], left: int, right: int, *, trimmed: bool = False
+) -> Candidate | None:
     chunk = segments[left : right + 1]
     text = "".join(item.text for item in chunk).strip()
     if not text:
@@ -191,6 +249,8 @@ def _build(segments: list[Segment], left: int, right: int) -> Candidate | None:
     reasons: list[str] = []
     if hits:
         reasons.append(f"卖点词 {len(hits)} 个：{'、'.join(hits[:6])}")
+    if trimmed:
+        reasons.append("已剔掉结尾的道别句")
     if hook >= 80:
         reasons.append("开场 3 秒有钩子（提问/数字/否定式）")
     if cta >= 60:
