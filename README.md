@@ -77,6 +77,33 @@ docker compose up -d --build
 # Web http://127.0.0.1:3000   API http://127.0.0.1:8000/health
 ```
 
+### 建账号：仓库里没有默认口令
+
+起完服务第一屏是登录页，但仓库里**没有任何明文口令**——`seed_demo_data.py` 只从环境变量读，
+读不到就直接退出（脚本里内置口令等于连口令一起提交上去）。所以首次要自己造一个：
+
+```powershell
+$env:DEMO_OWNER_PASSWORD = "自己定一个"        # 只对当前终端会话有效
+api\.venv\Scripts\python.exe api\scripts\seed_demo_data.py    # 建 owner + 演示工作区（幂等）
+```
+
+忘了口令不用重新播种，直接重置：
+
+```powershell
+$env:DEMO_OWNER_PASSWORD = "新口令"
+api\.venv\Scripts\python.exe api\scripts\reset_demo_password.py
+```
+
+两个脚本都会自己切到 `api/` 目录，从仓库根目录执行即可。然后用 `demo.owner@example.com`
+加你刚设的口令登录。
+
+登不进去时先看状态码，这两个码分工很明确（实测）：
+
+| 情况 | 状态码 | 说明 |
+|---|---|---|
+| 口令错 | **401** `Invalid email or password` | 先校口令，此时账号停没停用还看不出来 |
+| 账号停用 + 口令对 | **403** `User is disabled` | 走到这里说明口令是对的，问题在账号状态 |
+
 ## 常用命令
 
 ```powershell
