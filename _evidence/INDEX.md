@@ -487,6 +487,21 @@ POST /live/sessions/1/recut                        → 200 clip_count=8
 规则从锚点向后扩到 12 秒就停，不判断那句是不是收场。这就是 `decide` 必须存在的理由，
 也是 ADR 0017 说"只挑不剪"的原因：边界要人来修。
 
+**补记（规则 1.0.1）：这条已经修掉了。** 修法是扩展之后削尾巴（`_tidy`），
+判据是一张道别词表 + 「不动含卖点词的句子」+ 「削短了往左补」。同一场复算：
+
+```
+_expand(segs, 46) = (45, 47)  → 3:44-3:59  小黄车还有最后 50 件。抢完就下架。我们下次见。
+_tidy(segs, 45, 47) = (44, 46) → 3:39-3:54  过点恢复 199。小黄车还有最后 50 件。抢完就下架。
+```
+
+削完只剩 10 秒（低于 12 秒下限），所以往左补了一句「过点恢复 199」回到 15 秒。
+重挑后该场 `rule_version=1.0.1`，7 条 `suggested` 里没有一条带道别。
+
+保留了 1 条 `rejected`（3:44-3:59，结尾仍是"我们下次见"）——那是 1.0.0 下的人工结论，
+重挑只清 `suggested`，历史不改写。页面上会同时看到"旧规则留下的脏边界"和"新规则干净的候选"，
+这是有意的。
+
 修好的一处：`decide` 原先只给 `approved` 写 `decided_at`，`rejected` 留 `null`，
 导致"这条什么时候被否的"答不上来。改成两种决策都写（仍取数据库时钟，与 `created_at` 同源），
 新增测试 `test_rejecting_a_clip_also_stamps_the_time`。`tests/test_live.py` **21 项**。
@@ -543,3 +558,56 @@ POST /finetune/jobs/1/eval     → 200
 
 `tests/test_finetune.py` **26 项**，含 `test_build_dataset_records_why_samples_were_skipped`
 与 `test_dedupe_keeps_the_qa_copy_because_its_label_is_harder`。
+
+## E22 微调作业真的跑了一轮：执行器 → 训练器 → 回调 → 台账
+
+`tests/test_finetune.py` 从 26 项加到 33 项，覆盖签名、幂等、状态机；这里记的是**跑起来的那一轮**。
+
+先登记（`POST /finetune/jobs`，数据集 #3）：
+
+```json
+{"id":4,"dataset_id":3,"name":"sft-执行器验证-2","base_model":"qwen-plus","status":"registered"}
+```
+
+执行器（`api/scripts/run_finetune_job.py --job 4`）：
+
+```
+数据集已导出：api/finetune-runs/job-4/dataset-3-13samples.jsonl（11 行）
+训练命令：{api_root}/.venv/Scripts/python.exe {api_root}/scripts/standin_trainer.py
+          --data ...job-4...jsonl --out ...job-4/output --base qwen-plus --steps 8
+结果 succeeded（退出码 0，0.6s）→ 回写 200
+```
+
+台账（`GET /finetune/jobs/4`）：
+
+```json
+{"status":"succeeded","finished_at":"2026-10-31T11:56:59",
+ "metrics":{"exit_code":0,"duration_seconds":0.6,
+            "log_path":"...\\finetune-runs\\job-4\\run.log",
+            "log_tail":"[standin] base=qwen-plus 载入 11 条样本（不加载任何权重）\n[standin] step 1/8 数据校验通过\n..."}}
+```
+
+产物 `api/finetune-runs/job-4/output/manifest.json`：
+
+```json
+{"note":"stand-in：没有训练任何模型，产物只是数据校验结果","base_model":"qwen-plus",
+ "samples":11,"turns_histogram":{"3":8,"5":2,"7":1},"chars":2681,"steps":8}
+```
+
+同一份数据集第一次跑失败过（job #3，退出码 2）：`shlex.split` 默认 POSIX 模式把反斜杠当转义，
+`D:\learning\...` 被啃成 `D:learning...`，训练器报"数据集不存在"。改成 Windows 下
+`posix=False` 再剥引号。**这条失败是真的**——它证明退出码不是编的，链路里任何一环错都会落到台账上。
+
+三条边界现场验过（同一个作业 #4）：
+
+| 动作 | 结果 |
+| --- | --- |
+| 重复回写 `succeeded` + 空 metrics | **200**，`metrics` 仍是第一次那份（幂等，不被清空） |
+| 把已完成改回 `running` | **409** `任务已经是 succeeded，不能再变成 running；要重跑请新登记一条` |
+| 用错密钥签名 | **401** `签名不匹配` |
+
+执行器重跑同一条作业直接拒绝：`作业 #4 当前是 succeeded，只有 registered 的作业能开跑`。
+
+**诚实标注**：这一轮用的是 `standin_trainer.py`，它校验 JSONL、打日志、写 manifest，
+但**不训练任何模型**。验的是"执行器 + 回调 + 状态机 + 台账"这条缝，不是模型效果。
+真实训练把 `FINETUNE_TRAIN_COMMAND` 换成 llamafactory / torchrun / 云 CLI 即可，协议不用改。
