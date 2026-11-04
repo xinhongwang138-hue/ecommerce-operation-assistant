@@ -106,15 +106,14 @@ api\.venv\Scripts\python.exe api\scripts\reset_demo_password.py
 
 ### 快捷登录（演示用，可不配）
 
-自己留一份口令、演示时不想当众敲，可以让服务端替你补这一步。前置是在两个 env 文件里各写一行：
+自己留一份口令、演示时不想当众敲，可以让服务端替你补这一步。前置只有一行——在 `web/.env.local` 里填上你播种时用的那个口令：
 
 ```ini
 # web/.env.local —— 决定「登录页要不要出这个入口」
-DEMO_LOGIN_PASSWORD=<和你播种时设的一样>
-
-# api/.env.local —— 需要时后端自己也认这个口令
-DEMO_OWNER_PASSWORD=<同上>
+DEMO_LOGIN_PASSWORD=<和上面 $env:DEMO_OWNER_PASSWORD 设的同一个口令>
 ```
+
+**不要把 `DEMO_OWNER_PASSWORD` 写进 `api/.env.local`。** 它只被 `api/scripts/` 下的播种、重置、验收脚本读取，而这些脚本读的是进程环境变量（就是上面 `$env:` 那种写法）；`api/app/core/config.py` 的 `env_file` 只把值喂给 Settings 对象，不会回写 `os.environ`。写进 env 文件那行不会被任何地方读到。
 
 配好重启 `npm run dev`，登录页表单下方多出一块「演示快捷登录」，点一下就进工作台，显示的就是 `demo.owner@example.com`。
 
@@ -124,7 +123,7 @@ DEMO_OWNER_PASSWORD=<同上>
 - **没配 `DEMO_LOGIN_PASSWORD` 就整块不渲染**，页面和正常仓库长得一模一样。想临时关掉，把这一行删掉重启即可，不用改代码。
 - **token 照旧写 httpOnly cookie**，`document.cookie` 读不到，跟前台手输没有区别。
 
-生产环境不要配这两个变量。演示账号本身也不该有超出演示范围的数据权限——这一点在 P05 合同系统里是按角色拆开的（管理员看全量、普通员工只看本人）。
+生产环境不要留这一行（`web/.env.local` 本来就不进版本库，但部署时也别从别处注入同名变量）。另外记住它只是替人敲口令、**权限一点没放宽**：从入口进去就是 `demo.owner@example.com` 本人，能看到什么取决于那个账号自己的角色与数据范围，不会比手输多一行。
 
 ## 常用命令
 
