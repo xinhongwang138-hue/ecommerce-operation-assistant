@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DEMO_ACCOUNT_EMAIL, demoLoginEnabled } from "@/lib/demo-login";
 
 type LoginPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -73,6 +74,27 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             登录
           </Button>
         </form>
+
+        {demoLoginEnabled() ? (
+          <div className="mt-6 border-t border-[var(--border)] pt-5">
+            <p className="text-sm font-medium">演示快捷登录</p>
+            <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+              口令由服务端补上，不出现在页面和浏览器里。
+            </p>
+            <form action="/login/demo" method="post" className="mt-3">
+              <Button
+                type="submit"
+                variant="outline"
+                className="h-11 w-full border-[var(--border-strong)]"
+              >
+                以演示店主身份进入
+              </Button>
+            </form>
+            <p className="mt-2 text-center text-xs text-[var(--muted-foreground)]">
+              {DEMO_ACCOUNT_EMAIL}
+            </p>
+          </div>
+        ) : null}
 
         <Link href="/" className="mt-4 inline-flex text-sm text-[var(--muted-foreground)] hover:text-[var(--primary)]">
           返回首页

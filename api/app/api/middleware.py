@@ -44,7 +44,16 @@ class BodySizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        limit = get_settings().max_request_bytes
+        settings = get_settings()
+        limit = settings.max_request_bytes
+        # 知识库资料上传是唯一需要更大额度的入口：一份真实产品 PDF 轻松超过 16MB。
+        # 只对该路径放宽到 KNOWLEDGE_MAX_UPLOAD_BYTES，其余接口维持全局上限，
+        # 避免为了一个功能把整站的 DoS 防线一起抬高。
+        if (
+            scope.get("method") == "POST"
+            and scope.get("path", "").endswith("/knowledge/documents")
+        ):
+            limit = max(limit, settings.knowledge_max_upload_bytes)
         declared = Headers(scope=scope).get("content-length")
         if declared is not None and declared.isdigit() and int(declared) > limit:
             await JSONResponse({"detail": "Request entity too large"}, status_code=413)(scope, receive, send)

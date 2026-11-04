@@ -13,6 +13,7 @@ from app.agents.registry import (
     WORKFLOW_REGISTRY,
 )
 from app.models import (
+    AgentRiskLevel,
     AgentRun,
     AgentRunStatus,
     AgentTask,
@@ -61,10 +62,12 @@ def _create(db, ids, *, product_id=None):
     )
 
 
-def test_registry_has_nine_agents_sixteen_tools_and_seven_workflows():
+def test_registry_has_nine_agents_seventeen_tools_and_seven_workflows():
     assert len(AGENT_REGISTRY) == 9
-    assert len(TOOL_REGISTRY) == 16
+    # 17 = 原 16 个 + knowledge.search（掌柜智库检索，只读 R0）
+    assert len(TOOL_REGISTRY) == 17
     assert len(WORKFLOW_REGISTRY) == 7
+    assert TOOL_REGISTRY["knowledge.search"].risk_level is AgentRiskLevel.R0
 
 
 def test_policy_denies_unlisted_tool_and_requires_owner_approval():

@@ -25,3 +25,11 @@ web/AGENTS.md
 
 # 安全审计报告仅保留本地，不入公开仓库
 SECURITY_AUDIT.md
+
+# 数据中台：DuckDB 仓文件是运行时可重建产物，只保留目录
+api/warehouse/*.duckdb
+api/warehouse/*.duckdb.wal
+api/.pytest-tmp/
+
+# 微调执行器的落地目录：数据集副本、训练日志与产物，全是可重跑的运行时文件
+api/finetune-runs/

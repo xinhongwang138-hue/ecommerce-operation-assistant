@@ -17,6 +17,21 @@ class CompetitorContext(StrictModel):
     review_keywords: list[str] = Field(default_factory=list)
 
 
+class KnowledgeRef(StrictModel):
+    """掌柜智库回给 Agent 的一条引用出处。
+
+    保留 file_title + chunk_id + parent_title，是为了让"引用了哪份资料的哪一段"
+    在界面上能落到具体文档，而不是只有一句"来自知识库"。
+    """
+
+    document_id: int | None = None
+    file_title: str
+    chunk_id: str | None = None
+    parent_title: str | None = None
+    snippet: str | None = None
+    score: float | None = None
+
+
 class ProductContext(StrictModel):
     product_id: int
     name: str
@@ -29,6 +44,7 @@ class ProductContext(StrictModel):
     product_url: str | None = None
     images: list[str] = Field(default_factory=list)
     competitors: list[CompetitorContext] = Field(default_factory=list)
+    knowledge_refs: list[KnowledgeRef] = Field(default_factory=list)
 
 
 class DiagnosisDraft(StrictModel):
@@ -119,6 +135,8 @@ class AgentWorkflowState(TypedDict, total=False):
     context: dict[str, Any]
     diagnosis: dict[str, Any]
     creative_plans: list[dict[str, Any]]
+    # 本轮生成实际引用的智库出处，随 draft_output/final_output 一起落库供审计
+    knowledge_sources: list[dict[str, Any]]
     quality_report: dict[str, Any]
     revision_feedback: list[dict[str, Any]]
     revision_count: int

@@ -36,7 +36,9 @@ $OutLog = Join-Path $LogDir "worker.out.log"
 $ErrLog = Join-Path $LogDir "worker.err.log"
 $PidFile = Join-Path $LogDir "worker.pid"
 $AppTarget = "app.worker.celery_app.celery_app"
-$Queues = "generation,agent,agent.workflow,maintenance"
+# 必须包含 CELERY_KNOWLEDGE_QUEUE（默认 knowledge），否则知识库导入任务会投进一个
+# 没有消费者认领的队列，界面上表现为状态永远停在"排队中"而不报错。
+$Queues = "generation,agent,agent.workflow,maintenance,knowledge"
 
 if (-not (Test-Path $Python)) {
     Write-Error "未找到虚拟环境解释器：$Python。请先在 api 目录创建 .venv 并安装依赖。"

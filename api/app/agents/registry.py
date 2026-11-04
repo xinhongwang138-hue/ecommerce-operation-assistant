@@ -57,6 +57,10 @@ TOOL_REGISTRY: Final[dict[str, ToolDefinition]] = {
     "product.read": ToolDefinition("product.read", AgentRiskLevel.R0, "读取商品与经营上下文"),
     "store.read": ToolDefinition("store.read", AgentRiskLevel.R0, "读取店铺组合与经营上下文"),
     "competitor.read": ToolDefinition("competitor.read", AgentRiskLevel.R0, "读取竞品与监控快照"),
+    # 掌柜智库检索：只读、按租户强制过滤，风险等级与其余 read 一致。
+    "knowledge.search": ToolDefinition(
+        "knowledge.search", AgentRiskLevel.R0, "检索本租户掌柜智库资料并返回出处"
+    ),
     "competitor.monitor.run": ToolDefinition(
         "competitor.monitor.run", AgentRiskLevel.R1, "生成竞品监控快照"
     ),
@@ -121,7 +125,7 @@ AGENT_REGISTRY: Final[dict[str, AgentDefinition]] = {
         CREATIVE_STRATEGY_AGENT,
         "1.0.0",
         "主图、视频脚本、标题与详情策略",
-        frozenset({"product.read", "diagnosis.draft", "creative.plan.draft"}),
+        frozenset({"product.read", "diagnosis.draft", "creative.plan.draft", "knowledge.search"}),
     ),
     CONTENT_PRODUCTION_AGENT: AgentDefinition(
         CONTENT_PRODUCTION_AGENT,

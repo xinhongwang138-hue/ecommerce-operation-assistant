@@ -130,11 +130,14 @@ class CreativeStrategyAgent:
                 temperature=0.35,
             )
             parsed = _CreativePlansOutput.model_validate(result.output)
+            knowledge_provenance = [ref.model_dump() for ref in context.knowledge_refs]
             plans = [
                 CreativePlanDraft(
                     **plan,
                     source="llm",
-                    provenance={"model": result.model},
+                    # 出处随方案落库：审计与前端都要能回答"这句话来自哪份资料"，
+                    # 只把 [来源N] 写在文案里而不留映射，等于没有出处。
+                    provenance={"model": result.model, "knowledge_refs": knowledge_provenance},
                 ).model_dump()
                 for plan in parsed.plans
             ]
@@ -266,6 +269,16 @@ def _creative_messages(
 ) -> list[dict[str, str]]:
     """创意消息，把领域输入转换为结构化候选结果，并保留规则兜底和模型用量。"""
     # 节点只通过结构化状态和受控工具交换数据，禁止绕过策略边界写入结果。
+    knowledge_rule = ""
+    if context.knowledge_refs:
+        # 没资料时不塞这段字：给空租户讲引用规则只会稀释提示词。
+        knowledge_rule = (
+            "\n掌柜智库资料（按序号引用）："
+            f"{json.dumps([ref.model_dump() for ref in context.knowledge_refs], ensure_ascii=False)}\n"
+            "用到其中某条时，在该方案的 proof_points 里写成 \"[来源N] 原文片段摘要\"，"
+            "N 从 1 开始对应上面的序号；没用到就不要编造来源。"
+            "只能引用这些资料里确实存在的事实，不得把资料外的内容标成来源。\n"
+        )
     return [
         {
             "role": "system",
@@ -283,6 +296,7 @@ def _creative_messages(
                 f"商品上下文：{context.model_dump_json()}\n"
                 f"诊断：{diagnosis.model_dump_json()}\n"
                 f"上一轮质量反馈：{json.dumps(revision_feedback, ensure_ascii=False)}"
+                f"{knowledge_rule}"
             ),
         },
     ]

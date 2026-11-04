@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     celery_agent_queue: str = Field(default="agent", alias="CELERY_AGENT_QUEUE")
     celery_agent_workflow_queue: str = Field(default="agent.workflow", alias="CELERY_AGENT_WORKFLOW_QUEUE")
     celery_maintenance_queue: str = Field(default="maintenance", alias="CELERY_MAINTENANCE_QUEUE")
+    # 知识库导入单独占一个队列：MinerU 解析 + 本地向量化是分钟级长任务，
+    # 混进 generation 会饿死素材生成，混进 agent 又会被 1700/1800s 的时间限制拦腰砍断。
+    celery_knowledge_queue: str = Field(default="knowledge", alias="CELERY_KNOWLEDGE_QUEUE")
     agent_checkpoint_database_url: str | None = Field(default=None, alias="AGENT_CHECKPOINT_DATABASE_URL")
     agent_checkpoint_host: str = Field(default="127.0.0.1", alias="AGENT_CHECKPOINT_HOST")
     agent_checkpoint_port: int = Field(default=5433, alias="AGENT_CHECKPOINT_PORT")
@@ -52,6 +55,13 @@ class Settings(BaseSettings):
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, alias="LLM_MODEL")
+
+    # 自建 RAG 的向量化。只配 EMBEDDING_MODEL 就够：base_url 与 api_key 缺省继承
+    # LLM_*，因为同一家供应商的对话与向量端点通常在同一个兼容网关下。
+    # 三个都空时向量召回整体关闭，检索退化成纯词法（这是可用的降级，不是故障）。
+    embedding_model: str | None = Field(default=None, alias="EMBEDDING_MODEL")
+    embedding_base_url: str | None = Field(default=None, alias="EMBEDDING_BASE_URL")
+    embedding_api_key: str | None = Field(default=None, alias="EMBEDDING_API_KEY")
     # 图片取字（OCR）单列一组配置：默认沿用文本模型的地址与密钥，只换模型名，
     # 这样接入方只要多配一个 OCR_MODEL 就能用，不必重复填 key。
     ocr_model: str = Field(default="qwen-vl-ocr-2025-11-20", alias="OCR_MODEL")
@@ -89,6 +99,30 @@ class Settings(BaseSettings):
         default="https://nebula-agent.xingyun3d.com/user/v1/ttsa/session",
         alias="DIGITAL_HUMAN_GATEWAY_SERVER",
     )
+    # 掌柜智库（知识库）代理层：浏览器只访问本服务，智库端口不对公网/前端暴露。
+    # 地址固定来自后端 .env，不允许按租户写入数据库——否则就复刻了 SECURITY_AUDIT
+    # V4/V5 的 SSRF 面（运营可自助改 base_url 并把内网地址打出来）。
+    # 三个值留空即视为未启用知识库：相关接口返回 503，不会静默放行。
+    kb_import_base_url: str = Field(default="", alias="KB_IMPORT_BASE_URL")
+    kb_query_base_url: str = Field(default="", alias="KB_QUERY_BASE_URL")
+    # 内部服务令牌密钥：与 AUTH_SECRET_KEY 刻意分开。智库只用它验租户，
+    # 即使智库侧泄露也伪造不出用户登录令牌。
+    kb_internal_secret: str = Field(default="", alias="KB_INTERNAL_SECRET")
+    kb_internal_token_ttl_seconds: int = Field(default=120, alias="KB_INTERNAL_TOKEN_TTL_SECONDS")
+    kb_timeout_seconds: int = Field(default=120, alias="KB_TIMEOUT_SECONDS")
+    knowledge_max_upload_bytes: int = Field(default=64 * 1024 * 1024, alias="KNOWLEDGE_MAX_UPLOAD_BYTES")
+    # 数据中台（P06）：分析侧不碰业务库连接，落成 DuckDB 单文件仓，每个 Workspace 一个文件。
+    # 目录必须可写且与业务库分离——把分析查询压回 MySQL 会让一次全表扫描拖垮下单链路。
+    warehouse_dir: str = Field(default=str(API_DIR / "warehouse"), alias="WAREHOUSE_DIR")
+    warehouse_query_max_rows: int = Field(default=500, alias="WAREHOUSE_QUERY_MAX_ROWS")
+
+    # 微调作业回写（P10）。外部训练服务跑完 POST 回来，用 HMAC 签名而不是用户 token：
+    # 训练机不该长期握着一个能读整个租户数据的令牌，它只需要"改这一条作业"的权限。
+    # 密钥为空时回调接口直接 503——不能因为没配就变成谁都能写的入口。
+    finetune_callback_secret: str | None = Field(default=None, alias="FINETUNE_CALLBACK_SECRET")
+    # 训练命令模板。{jsonl} / {output} / {base_model} / {job_id} 会被替换成实际值。
+    # 平台自己不训练：这里指向真正的训练器（llamafactory、torchrun、云上 CLI 都行）。
+    finetune_train_command: str | None = Field(default=None, alias="FINETUNE_TRAIN_COMMAND")
 
     #核心方法是读取本地的.env文件覆盖当前对象中的变量值 
     # 推荐写成绝对路径的形式 指定固定的.env文件
