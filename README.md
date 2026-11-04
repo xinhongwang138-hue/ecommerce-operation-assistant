@@ -104,6 +104,28 @@ api\.venv\Scripts\python.exe api\scripts\reset_demo_password.py
 | 口令错 | **401** `Invalid email or password` | 先校口令，此时账号停没停用还看不出来 |
 | 账号停用 + 口令对 | **403** `User is disabled` | 走到这里说明口令是对的，问题在账号状态 |
 
+### 快捷登录（演示用，可不配）
+
+自己留一份口令、演示时不想当众敲，可以让服务端替你补这一步。前置是在两个 env 文件里各写一行：
+
+```ini
+# web/.env.local —— 决定「登录页要不要出这个入口」
+DEMO_LOGIN_PASSWORD=<和你播种时设的一样>
+
+# api/.env.local —— 需要时后端自己也认这个口令
+DEMO_OWNER_PASSWORD=<同上>
+```
+
+配好重启 `npm run dev`，登录页表单下方多出一块「演示快捷登录」，点一下就进工作台，显示的就是 `demo.owner@example.com`。
+
+几个刻意的设计：
+
+- **口令不下发浏览器**。按钮提交的是 `POST /login/demo`，**不带任何参数**；route handler 从 `process.env` 取口令，再走一遍真实的 `/api/v1/auth/login`。所以登录流水、失败锁定、会话、数据权限都和手输完全一致——它不是绕过认证的后门，只是替你把口令填进那个框。
+- **没配 `DEMO_LOGIN_PASSWORD` 就整块不渲染**，页面和正常仓库长得一模一样。想临时关掉，把这一行删掉重启即可，不用改代码。
+- **token 照旧写 httpOnly cookie**，`document.cookie` 读不到，跟前台手输没有区别。
+
+生产环境不要配这两个变量。演示账号本身也不该有超出演示范围的数据权限——这一点在 P05 合同系统里是按角色拆开的（管理员看全量、普通员工只看本人）。
+
 ## 常用命令
 
 ```powershell
@@ -371,3 +393,9 @@ MySQL ──抽取──► ODS（原样落地）──► DWD（清洗/去重/�
 - **`next build` 在受限沙箱中断**：属于环境对 `.next` 清理的拦截，不是代码错误；类型校验请用 `npx tsc --noEmit`。
 - **页面只出骨架、卡片是空壳**：查 `.next` 里 RSC payload 是否把 `Card` 渲染成无 children 的 `div`。`ui/card.tsx` 的 `Card` / `CardHeader` 漏写 `{...props}` 时会静默吞掉 children（不报错、不报错边界），已修复并需保持。
 - **`/data-platform` 接口 409**：仓里还没跑过批，先 `POST /api/v1/data-platform/runs` 或用页面上的「重新抽取并重建」。
+
+## 许可
+
+采用 [MIT 许可证](LICENSE)。可自由使用、修改、再分发（含商用），需保留原版权声明与许可声明；作者不提供任何担保。
+
+依赖组件各自遵循其上游许可证（FastAPI、Celery、Next.js、SQLAlchemy 等），本仓库许可证不覆盖第三方代码。
