@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ecommerce-operation-assistant-api"
 version = "0.1.0"
@@ -37,3 +41,6 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 只为 pip install -e 服务：app 是唯一的运行时包，tests/ 与 scripts/ 不打进去。
+[tool.setuptools.packages.find]
+include = ["app*"]
