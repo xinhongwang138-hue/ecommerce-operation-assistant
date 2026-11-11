@@ -34,5 +34,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      # 必须用 python -m pytest，不能直接 pytest：
+      # -m 会把 cwd（api/）放进 sys.path，测试里的 `from tests.xxx import` 才找得到；
+      # 裸 pytest 只把 tests/ 目录加进 sys.path，会因为 tests 没有 __init__.py 而
+      # 报 ModuleNotFoundError: No module named 'tests'（14 个模块全部收集失败）。
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
