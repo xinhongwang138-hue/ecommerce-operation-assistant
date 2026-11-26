@@ -1,0 +1,1842 @@
+from datetime import date, datetime
+from decimal import Decimal
+from enum import StrEnum
+
+from sqlalchemy import (
+    JSON,
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Platform(StrEnum):
+    # 平台枚举保持多平台扩展，业务代码不能把商品、店铺或 SKU 概念绑定到单一平台。
+    DOUYIN = "douyin"
+    TAOBAO = "taobao"
+    TMALL = "tmall"
+    PINUODUODU = "pinduoduo"
+    JD = "jd"
+    TIKTOK_SHOP = "tiktok_shop"
+    AMAZON = "amazon"
+    OTHER = "other"
+
+
+class CreativePlanType(StrEnum):
+    MAIN_IMAGE = "main_image"
+    VIDEO_SCRIPT = "video_script"
+    TITLE = "title"
+    DETAIL = "detail"
+
+
+class CreativePlanStatus(StrEnum):
+    # 创意方案状态只表达运营筛选结果，是否真正投放仍由人工确认和实验记录决定。
+    DRAFT = "draft"
+    SELECTED = "selected"
+    ARCHIVED = "archived"
+
+
+class GenerationJobKind(StrEnum):
+    MAIN_IMAGE_ASSET = "main_image_asset"
+    VIDEO_ASSET = "video_asset"
+
+
+class GenerationJobStatus(StrEnum):
+    # 生成任务状态覆盖队列生命周期，便于前端展示等待、执行、失败、取消和重试边界。
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AgentRunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    AWAITING_REVIEW = "awaiting_review"
+    RESUME_QUEUED = "resume_queued"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AgentReviewDecision(StrEnum):
+    APPROVE = "approve"
+    EDIT_AND_APPROVE = "edit_and_approve"
+    REJECT = "reject"
+
+
+class WorkspaceStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class MembershipStatus(StrEnum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
+class AgentConversationStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class AgentTaskStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    AWAITING_APPROVAL = "awaiting_approval"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AgentApprovalStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+class AgentRiskLevel(StrEnum):
+    R0 = "R0"
+    R1 = "R1"
+    R2 = "R2"
+    R3 = "R3"
+
+
+class AgentMemoryStatus(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    EXPIRED = "expired"
+
+
+class OutboxEventStatus(StrEnum):
+    PENDING = "pending"
+    PUBLISHED = "published"
+    FAILED = "failed"
+
+
+class ModelTarget(StrEnum):
+    TEXT = "text"
+    IMAGE = "image"
+    VIDEO = "video"
+
+
+class UserRole(StrEnum):
+    OWNER = "owner"
+    OPERATOR = "operator"
+    VIEWER = "viewer"
+
+
+class UserStatus(StrEnum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
+class StoreStatus(StrEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    CLOSED = "closed"
+
+
+class PlatformAccountStatus(StrEnum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    DISABLED = "disabled"
+
+
+class ProductSkuStatus(StrEnum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+
+class InventoryMovementType(StrEnum):
+    # 库存动作区分真实数量变化和锁定占用，避免订单预占与实际出库被重复扣减。
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
+    ADJUSTMENT = "adjustment"
+    LOCK = "lock"
+    RELEASE = "release"
+
+
+def enum_values(enum_class: type[StrEnum]) -> list[str]:
+    """enumvalues，集中封装当前模块的输入校验、核心处理和返回值约定。"""
+    return [item.value for item in enum_class]
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class Product(TimestampMixin, Base):
+    __tablename__ = "products"
+
+    # Product 是单品运营闭环的核心聚合根，关联诊断、素材、投放、复盘和库存 SKU。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    platform: Mapped[Platform] = mapped_column(
+        Enum(Platform, values_callable=enum_values),
+        default=Platform.DOUYIN,
+    )
+    category: Mapped[str | None] = mapped_column(String(120))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    target_audience: Mapped[str | None] = mapped_column(Text)
+    selling_points: Mapped[list[str]] = mapped_column(JSON, default=list)
+    product_url: Mapped[str | None] = mapped_column(String(1024))
+    # external_product_id/platform_status 保存平台侧标识和状态，便于多平台对账，不承载平台密钥。
+    external_product_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    platform_status: Mapped[str | None] = mapped_column(String(50))
+    images: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    store: Mapped["Store | None"] = relationship(back_populates="products")
+    skus: Mapped[list["ProductSku"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductSku.created_at.desc()",
+    )
+    platform_mappings: Mapped[list["PlatformProductMapping"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    competitors: Mapped[list["Competitor"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    competitor_monitors: Mapped[list["CompetitorMonitor"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="CompetitorMonitor.created_at.desc()",
+    )
+    creative_plans: Mapped[list["CreativePlan"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    performance_records: Mapped[list["PerformanceRecord"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    review_reports: Mapped[list["ReviewReport"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    ad_recommendations: Mapped[list["AdRecommendation"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="AdRecommendation.created_at.desc()",
+    )
+    ad_experiments: Mapped[list["AdExperiment"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="AdExperiment.created_at.desc()",
+    )
+    promotion_links: Mapped[list["PromotionLink"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="PromotionLink.created_at.desc()",
+    )
+    promotion_link_clicks: Mapped[list["PromotionLinkClick"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    generated_assets: Mapped[list["GeneratedAsset"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="GeneratedAsset.created_at.desc()",
+    )
+    diagnoses: Mapped[list["ProductDiagnosis"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductDiagnosis.created_at.desc()",
+    )
+    generation_jobs: Mapped[list["GenerationJob"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="GenerationJob.created_at.desc()",
+    )
+    public_link_parse_tasks: Mapped[list["PublicLinkParseTask"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="PublicLinkParseTask.created_at.desc()",
+    )
+    agent_runs: Mapped[list["AgentRun"]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="AgentRun.created_at.desc()",
+    )
+
+
+class ModelProviderSetting(TimestampMixin, Base):
+    __tablename__ = "model_provider_settings"
+
+    # 模型配置按 text/image/video 分目标保存，允许后台替换供应商而不改代码或前端硬编码 key。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    target: Mapped[ModelTarget] = mapped_column(
+        Enum(ModelTarget, values_callable=enum_values),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    provider: Mapped[str | None] = mapped_column(String(50))
+    base_url: Mapped[str | None] = mapped_column(String(1024))
+    api_key: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(120))
+    size: Mapped[str | None] = mapped_column(String(50))
+    duration: Mapped[int | None]
+    workspace_id: Mapped[str | None] = mapped_column(String(120))
+    poll_interval_seconds: Mapped[int | None]
+    poll_max_attempts: Mapped[int | None]
+
+
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+
+    # 用户模型只保存角色和密码摘要；具体权限由服务层从角色派生，避免权限布尔值散落写库。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, values_callable=enum_values),
+        default=UserRole.OPERATOR,
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[UserStatus] = mapped_column(
+        Enum(UserStatus, values_callable=enum_values),
+        default=UserStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Workspace(TimestampMixin, Base):
+    __tablename__ = "workspaces"
+
+    # Workspace 是业务数据、Agent 上下文、记忆和审计的强租户边界。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    slug: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[WorkspaceStatus] = mapped_column(
+        Enum(WorkspaceStatus, values_callable=enum_values),
+        default=WorkspaceStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    knowledge_documents: Mapped[list["KnowledgeDocument"]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+    )
+
+
+class WorkspaceMembership(TimestampMixin, Base):
+    __tablename__ = "workspace_memberships"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "user_id", name="uq_workspace_membership"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, values_callable=enum_values),
+        default=UserRole.OPERATOR,
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[MembershipStatus] = mapped_column(
+        Enum(MembershipStatus, values_callable=enum_values),
+        default=MembershipStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+
+
+class Store(TimestampMixin, Base):
+    __tablename__ = "stores"
+
+    # Store 表示经营店铺维度，V1 扩展到多平台账号、SKU 和库存时以此做聚合入口。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    platform: Mapped[Platform] = mapped_column(
+        Enum(Platform, values_callable=enum_values),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[StoreStatus] = mapped_column(
+        Enum(StoreStatus, values_callable=enum_values),
+        default=StoreStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    external_store_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    owner_name: Mapped[str | None] = mapped_column(String(120))
+    note: Mapped[str | None] = mapped_column(Text)
+
+    products: Mapped[list[Product]] = relationship(
+        back_populates="store",
+        order_by="Product.created_at.desc()",
+    )
+    platform_accounts: Mapped[list["PlatformAccount"]] = relationship(
+        back_populates="store",
+        cascade="all, delete-orphan",
+    )
+
+
+class PlatformAccount(TimestampMixin, Base):
+    __tablename__ = "platform_accounts"
+
+    # 平台账号只记录授权状态和非敏感 metadata，不保存平台密码、Cookie 或明文 access token。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True)
+    platform: Mapped[Platform] = mapped_column(
+        Enum(Platform, values_callable=enum_values),
+        nullable=False,
+        index=True,
+    )
+    account_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    external_account_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    status: Mapped[PlatformAccountStatus] = mapped_column(
+        Enum(PlatformAccountStatus, values_callable=enum_values),
+        default=PlatformAccountStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    auth_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    store: Mapped[Store] = relationship(back_populates="platform_accounts")
+
+
+class ProductSku(TimestampMixin, Base):
+    __tablename__ = "product_skus"
+
+    # SKU 是库存和平台映射的最小规格单元，同一商品下可对应多个平台 SKU。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    sku_code: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    status: Mapped[ProductSkuStatus] = mapped_column(
+        Enum(ProductSkuStatus, values_callable=enum_values),
+        default=ProductSkuStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+
+    product: Mapped[Product] = relationship(back_populates="skus")
+    inventory_item: Mapped["InventoryItem | None"] = relationship(
+        back_populates="sku",
+        cascade="all, delete-orphan",
+    )
+    inventory_movements: Mapped[list["InventoryMovement"]] = relationship(
+        back_populates="sku",
+        order_by="InventoryMovement.created_at.desc()",
+    )
+    platform_mappings: Mapped[list["PlatformProductMapping"]] = relationship(
+        back_populates="sku",
+        cascade="all, delete-orphan",
+    )
+
+
+class InventoryItem(TimestampMixin, Base):
+    __tablename__ = "inventory_items"
+
+    # 库存快照只保存当前总量、锁定量和预警线；所有变化原因必须追溯到 InventoryMovement。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    sku_id: Mapped[int] = mapped_column(ForeignKey("product_skus.id"), nullable=False, unique=True, index=True)
+    quantity: Mapped[int] = mapped_column(default=0, nullable=False)
+    locked_quantity: Mapped[int] = mapped_column(default=0, nullable=False)
+    warning_threshold: Mapped[int] = mapped_column(default=0, nullable=False)
+    location: Mapped[str | None] = mapped_column(String(120))
+
+    sku: Mapped[ProductSku] = relationship(back_populates="inventory_item")
+    movements: Mapped[list["InventoryMovement"]] = relationship(
+        back_populates="inventory_item",
+        cascade="all, delete-orphan",
+        order_by="InventoryMovement.created_at.desc()",
+    )
+
+
+class InventoryMovement(TimestampMixin, Base):
+    __tablename__ = "inventory_movements"
+
+    # 库存流水保留变更前后值，支持人工盘点、导入修正和后续轻量 ERP 对账。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    inventory_item_id: Mapped[int] = mapped_column(ForeignKey("inventory_items.id"), nullable=False, index=True)
+    sku_id: Mapped[int] = mapped_column(ForeignKey("product_skus.id"), nullable=False, index=True)
+    movement_type: Mapped[InventoryMovementType] = mapped_column(
+        Enum(InventoryMovementType, values_callable=enum_values),
+        nullable=False,
+        index=True,
+    )
+    quantity_delta: Mapped[int] = mapped_column(nullable=False)
+    locked_delta: Mapped[int] = mapped_column(default=0, nullable=False)
+    before_quantity: Mapped[int] = mapped_column(nullable=False)
+    after_quantity: Mapped[int] = mapped_column(nullable=False)
+    before_locked_quantity: Mapped[int] = mapped_column(nullable=False)
+    after_locked_quantity: Mapped[int] = mapped_column(nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(255))
+    reference_type: Mapped[str | None] = mapped_column(String(50))
+    reference_id: Mapped[str | None] = mapped_column(String(120))
+    operator_name: Mapped[str | None] = mapped_column(String(120))
+
+    inventory_item: Mapped[InventoryItem] = relationship(back_populates="movements")
+    sku: Mapped[ProductSku] = relationship(back_populates="inventory_movements")
+
+
+class PlatformProductMapping(TimestampMixin, Base):
+    __tablename__ = "platform_product_mappings"
+
+    # 平台映射把内部商品/SKU 与外部平台 ID 解耦，方便淘宝、京东、抖音等平台独立扩展。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    sku_id: Mapped[int | None] = mapped_column(ForeignKey("product_skus.id"), index=True)
+    platform: Mapped[Platform] = mapped_column(
+        Enum(Platform, values_callable=enum_values),
+        nullable=False,
+        index=True,
+    )
+    external_product_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    external_sku_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    listing_url: Mapped[str | None] = mapped_column(String(1024))
+    status: Mapped[str | None] = mapped_column(String(50))
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    store: Mapped[Store | None] = relationship()
+    product: Mapped[Product] = relationship(back_populates="platform_mappings")
+    sku: Mapped[ProductSku | None] = relationship(back_populates="platform_mappings")
+
+
+class Competitor(TimestampMixin, Base):
+    __tablename__ = "competitors"
+
+    # 竞品资料来自手工录入、表格或有限公开链接解析，不代表平台后台完整经营数据。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    platform: Mapped[Platform] = mapped_column(
+        Enum(Platform, values_callable=enum_values),
+        default=Platform.DOUYIN,
+    )
+    url: Mapped[str | None] = mapped_column(String(1024))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    sales_hint: Mapped[str | None] = mapped_column(String(255))
+    title: Mapped[str | None] = mapped_column(String(255))
+    main_image: Mapped[str | None] = mapped_column(String(1024))
+    selling_points: Mapped[list[str]] = mapped_column(JSON, default=list)
+    review_keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    product: Mapped[Product] = relationship(back_populates="competitors")
+    monitors: Mapped[list["CompetitorMonitor"]] = relationship(
+        back_populates="competitor",
+        cascade="all, delete-orphan",
+    )
+
+
+class CompetitorMonitor(TimestampMixin, Base):
+    __tablename__ = "competitor_monitors"
+
+    # 竞品监控是轻量定期复查入口，只保存任务节奏，不实现大规模爬虫。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    competitor_id: Mapped[int] = mapped_column(ForeignKey("competitors.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), default="active", nullable=False, index=True)
+    interval_days: Mapped[int] = mapped_column(default=1, nullable=False)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    product: Mapped[Product] = relationship(back_populates="competitor_monitors")
+    competitor: Mapped[Competitor] = relationship(back_populates="monitors")
+    snapshots: Mapped[list["CompetitorMonitorSnapshot"]] = relationship(
+        back_populates="monitor",
+        cascade="all, delete-orphan",
+        foreign_keys="CompetitorMonitorSnapshot.monitor_id",
+        order_by="CompetitorMonitorSnapshot.checked_at.desc()",
+    )
+class CompetitorMonitorSnapshot(Base):
+    __tablename__ = "competitor_monitor_snapshots"
+
+    # 快照保留每次公开页面解析结果，失败也入库，便于判断是页面变化还是平台限制。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    monitor_id: Mapped[int] = mapped_column(ForeignKey("competitor_monitors.id"), nullable=False, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    competitor_id: Mapped[int] = mapped_column(ForeignKey("competitors.id"), nullable=False, index=True)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(50), default="succeeded", nullable=False, index=True)
+    title: Mapped[str | None] = mapped_column(String(255))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    sales_hint: Mapped[str | None] = mapped_column(String(255))
+    main_image: Mapped[str | None] = mapped_column(String(1024))
+    selling_points: Mapped[list[str]] = mapped_column(JSON, default=list)
+    changes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+
+    monitor: Mapped[CompetitorMonitor] = relationship(
+        back_populates="snapshots",
+        foreign_keys=[monitor_id],
+    )
+    product: Mapped[Product] = relationship()
+    competitor: Mapped[Competitor] = relationship()
+
+
+class PublicLinkParseTask(TimestampMixin, Base):
+    __tablename__ = "public_link_parse_tasks"
+
+    # 公开链接解析任务记录异步状态和重试次数，边界是用户提交的 http/https 商品页。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    task_type: Mapped[str] = mapped_column(String(50), default="competitor_import", nullable=False, index=True)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    platform: Mapped[Platform] = mapped_column(
+        Enum(Platform, values_callable=enum_values),
+        default=Platform.DOUYIN,
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False, index=True)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(default=3, nullable=False)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    product: Mapped[Product] = relationship(back_populates="public_link_parse_tasks")
+
+
+class CreativePlan(TimestampMixin, Base):
+    __tablename__ = "creative_plans"
+
+    # 创意方案保存结构化 content，主图、视频脚本和后续标题/详情方案都可复用同一扩展字段。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    agent_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        index=True,
+    )
+    type: Mapped[CreativePlanType] = mapped_column(
+        Enum(CreativePlanType, values_callable=enum_values),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+    rationale: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[CreativePlanStatus] = mapped_column(
+        Enum(CreativePlanStatus, values_callable=enum_values),
+        default=CreativePlanStatus.DRAFT,
+    )
+
+    product: Mapped[Product] = relationship(back_populates="creative_plans")
+    agent_run: Mapped["AgentRun | None"] = relationship(back_populates="creative_plans")
+    performance_records: Mapped[list["PerformanceRecord"]] = relationship(
+        back_populates="creative_plan",
+    )
+    generation_jobs: Mapped[list["GenerationJob"]] = relationship(
+        back_populates="creative_plan",
+    )
+    generated_assets: Mapped[list["GeneratedAsset"]] = relationship(
+        back_populates="creative_plan",
+    )
+
+
+class PerformanceRecord(TimestampMixin, Base):
+    __tablename__ = "performance_records"
+
+    # 经营数据由手工录入或表格导入回填，可关联素材、推广链接和实验以支持复盘归因。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    creative_plan_id: Mapped[int | None] = mapped_column(ForeignKey("creative_plans.id"))
+    ad_experiment_id: Mapped[int | None] = mapped_column(ForeignKey("ad_experiments.id"))
+    promotion_link_id: Mapped[int | None] = mapped_column(ForeignKey("promotion_links.id"))
+    generated_asset_id: Mapped[int | None] = mapped_column(ForeignKey("generated_assets.id"))
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    impressions: Mapped[int | None]
+    clicks: Mapped[int | None]
+    ctr: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    conversions: Mapped[int | None]
+    conversion_rate: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    spend: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    revenue: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    roi: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    product: Mapped[Product] = relationship(back_populates="performance_records")
+    creative_plan: Mapped[CreativePlan | None] = relationship(back_populates="performance_records")
+    ad_experiment: Mapped["AdExperiment | None"] = relationship(back_populates="performance_records")
+    promotion_link: Mapped["PromotionLink | None"] = relationship(back_populates="performance_records")
+    generated_asset: Mapped["GeneratedAsset | None"] = relationship(back_populates="performance_records")
+
+
+class ReviewReport(TimestampMixin, Base):
+    __tablename__ = "review_reports"
+
+    # 复盘报告保存结构化洞察和下一步动作，便于运营编辑，而不是只存一段不可解析文本。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    insights: Mapped[list[str]] = mapped_column(JSON, default=list)
+    next_actions: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    product: Mapped[Product] = relationship(back_populates="review_reports")
+
+
+class AdRecommendation(TimestampMixin, Base):
+    __tablename__ = "ad_recommendations"
+
+    # 投放建议只记录建议内容和人工确认结果，不对接广告平台执行预算或扣费动作。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(50), default="rules", nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+    confirmation_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
+    confirmed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmation_note: Mapped[str | None] = mapped_column(Text)
+
+    product: Mapped[Product] = relationship(back_populates="ad_recommendations")
+
+
+class AdExperiment(TimestampMixin, Base):
+    __tablename__ = "ad_experiments"
+
+    # 投放实验是计划和数据回填容器，status 表示运营人工维护的实验阶段。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    generated_asset_id: Mapped[int | None] = mapped_column(ForeignKey("generated_assets.id"))
+    promotion_link_id: Mapped[int | None] = mapped_column(ForeignKey("promotion_links.id"))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    audience: Mapped[str | None] = mapped_column(Text)
+    daily_budget: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    status: Mapped[str] = mapped_column(String(50), default="draft", nullable=False)
+    success_metric: Mapped[str | None] = mapped_column(Text)
+    hypothesis: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    product: Mapped[Product] = relationship(back_populates="ad_experiments")
+    generated_asset: Mapped["GeneratedAsset | None"] = relationship(back_populates="ad_experiments")
+    promotion_link: Mapped["PromotionLink | None"] = relationship(back_populates="ad_experiments")
+    performance_records: Mapped[list[PerformanceRecord]] = relationship(
+        back_populates="ad_experiment",
+    )
+
+
+class PromotionLink(TimestampMixin, Base):
+    __tablename__ = "promotion_links"
+
+    # 推广链接用于承接页和归因参数管理，短链点击只计数，不触发投放或库存动作。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    link_type: Mapped[str] = mapped_column(String(50), default="landing", nullable=False)
+    scenario: Mapped[str | None] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(50), default="active", nullable=False)
+    tracking_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    short_code: Mapped[str | None] = mapped_column(String(32), unique=True, index=True)
+    tracking_url: Mapped[str | None] = mapped_column(String(2048))
+    click_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    product: Mapped[Product] = relationship(back_populates="promotion_links")
+    performance_records: Mapped[list[PerformanceRecord]] = relationship(
+        back_populates="promotion_link",
+    )
+    ad_experiments: Mapped[list[AdExperiment]] = relationship(
+        back_populates="promotion_link",
+    )
+    clicks: Mapped[list["PromotionLinkClick"]] = relationship(
+        back_populates="promotion_link",
+        cascade="all, delete-orphan",
+    )
+
+
+class PromotionLinkClick(Base):
+    __tablename__ = "promotion_link_clicks"
+
+    # 点击日志只保留归因所需的 referer/user-agent 摘要，避免采集个人身份信息。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    promotion_link_id: Mapped[int] = mapped_column(
+        ForeignKey("promotion_links.id"),
+        nullable=False,
+        index=True,
+    )
+    tracking_code: Mapped[str | None] = mapped_column(String(64), index=True)
+    referer: Mapped[str | None] = mapped_column(String(2048))
+    user_agent: Mapped[str | None] = mapped_column(String(512))
+    clicked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    product: Mapped[Product] = relationship(back_populates="promotion_link_clicks")
+    promotion_link: Mapped[PromotionLink] = relationship(back_populates="clicks")
+
+
+class GeneratedAsset(TimestampMixin, Base):
+    __tablename__ = "generated_assets"
+
+    # 生成素材统一进入素材库，status/rating/tags 支持人工审核、复测和投放归因。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    creative_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("creative_plans.id"),
+        nullable=False,
+        index=True,
+    )
+    generation_job_id: Mapped[int | None] = mapped_column(ForeignKey("generation_jobs.id"))
+    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(120))
+    size: Mapped[str | None] = mapped_column(String(50))
+    duration: Mapped[int | None]
+    status: Mapped[str] = mapped_column(String(50), default="待评估", nullable=False)
+    asset_version: Mapped[int] = mapped_column(default=1, nullable=False)
+    usage_contexts: Mapped[list[str]] = mapped_column(JSON, default=list)
+    rating: Mapped[int | None]
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    note: Mapped[str | None] = mapped_column(Text)
+    asset_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+
+    product: Mapped[Product] = relationship(back_populates="generated_assets")
+    creative_plan: Mapped[CreativePlan] = relationship(back_populates="generated_assets")
+    generation_job: Mapped["GenerationJob | None"] = relationship(back_populates="generated_asset")
+    performance_records: Mapped[list[PerformanceRecord]] = relationship(
+        back_populates="generated_asset",
+    )
+    ad_experiments: Mapped[list[AdExperiment]] = relationship(
+        back_populates="generated_asset",
+    )
+
+
+class ProductDiagnosis(TimestampMixin, Base):
+    __tablename__ = "product_diagnoses"
+
+    # 商品诊断把 AI/规则输出拆成可编辑字段，raw_output 只保存安全摘要和结构化来源。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    agent_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL"),
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(String(50), default="rules", nullable=False)
+    positioning: Mapped[str] = mapped_column(Text, nullable=False)
+    price_band: Mapped[str] = mapped_column(String(255), nullable=False)
+    audience_insights: Mapped[list[str]] = mapped_column(JSON, default=list)
+    pain_points: Mapped[list[str]] = mapped_column(JSON, default=list)
+    selling_point_analysis: Mapped[list[str]] = mapped_column(JSON, default=list)
+    risks: Mapped[list[str]] = mapped_column(JSON, default=list)
+    recommendations: Mapped[list[str]] = mapped_column(JSON, default=list)
+    raw_output: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    product: Mapped[Product] = relationship(back_populates="diagnoses")
+    agent_run: Mapped["AgentRun | None"] = relationship(back_populates="diagnoses")
+
+
+class AgentConversation(TimestampMixin, Base):
+    __tablename__ = "agent_conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[AgentConversationStatus] = mapped_column(
+        Enum(AgentConversationStatus, values_callable=enum_values),
+        default=AgentConversationStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    context_scope: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class AgentConversationMessage(TimestampMixin, Base):
+    __tablename__ = "agent_conversation_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_conversations.id"),
+        nullable=False,
+        index=True,
+    )
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    structured_content: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class AgentTask(TimestampMixin, Base):
+    __tablename__ = "agent_tasks"
+
+    # Task 表达用户业务目标；Run 只是某个版本和某次重试的技术执行实例。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_conversations.id"),
+        index=True,
+    )
+    requested_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    workflow_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    workflow_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    intent: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[AgentTaskStatus] = mapped_column(
+        Enum(AgentTaskStatus, values_callable=enum_values),
+        default=AgentTaskStatus.QUEUED,
+        nullable=False,
+        index=True,
+    )
+    risk_level: Mapped[AgentRiskLevel] = mapped_column(
+        Enum(AgentRiskLevel, values_callable=enum_values),
+        default=AgentRiskLevel.R1,
+        nullable=False,
+        index=True,
+    )
+    context_scope: Mapped[dict] = mapped_column(JSON, default=dict)
+    input_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    version_manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentRun(TimestampMixin, Base):
+    __tablename__ = "agent_runs"
+
+    # MySQL 保存用户可见的运行事实；LangGraph checkpoint 只负责技术恢复，不能替代业务审计。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    thread_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("agent_tasks.id"), index=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
+    requested_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    workflow_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    workflow_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    attempt: Mapped[int] = mapped_column(default=1, nullable=False)
+    queue_name: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[AgentRunStatus] = mapped_column(
+        Enum(AgentRunStatus, values_callable=enum_values),
+        default=AgentRunStatus.QUEUED,
+        nullable=False,
+        index=True,
+    )
+    current_agent: Mapped[str | None] = mapped_column(String(100))
+    revision_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    max_revisions: Mapped[int] = mapped_column(default=1, nullable=False)
+    budget: Mapped[dict] = mapped_column(JSON, default=dict)
+    usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    version_manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    context_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    draft_output: Mapped[dict] = mapped_column(JSON, default=dict)
+    quality_report: Mapped[dict] = mapped_column(JSON, default=dict)
+    final_output: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    lease_owner: Mapped[str | None] = mapped_column(String(120), index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    timeout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    product: Mapped[Product | None] = relationship(back_populates="agent_runs")
+    requested_by: Mapped[User] = relationship(foreign_keys=[requested_by_user_id])
+    events: Mapped[list["AgentRunEvent"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="AgentRunEvent.id.asc()",
+    )
+    reviews: Mapped[list["AgentRunReview"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="AgentRunReview.id.asc()",
+    )
+    operations: Mapped[list["AgentRunOperation"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="AgentRunOperation.id.asc()",
+    )
+    diagnoses: Mapped[list[ProductDiagnosis]] = relationship(back_populates="agent_run")
+    creative_plans: Mapped[list[CreativePlan]] = relationship(back_populates="agent_run")
+
+
+class AgentRunEvent(TimestampMixin, Base):
+    __tablename__ = "agent_run_events"
+
+    # 事件同时服务用户进度、故障定位和评测轨迹，内容必须先脱敏再写入。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    agent_name: Mapped[str | None] = mapped_column(String(100), index=True)
+    operation_name: Mapped[str | None] = mapped_column(String(120))
+    status: Mapped[str | None] = mapped_column(String(30), index=True)
+    message: Mapped[str | None] = mapped_column(Text)
+    input_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    output_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    trace_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    span_id: Mapped[str | None] = mapped_column(String(32))
+
+    run: Mapped[AgentRun] = relationship(back_populates="events")
+
+
+class AgentRunReview(TimestampMixin, Base):
+    __tablename__ = "agent_run_reviews"
+
+    # 一个运行只接受一次最终审核决定，避免重复恢复同一 checkpoint 产生冲突。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_runs.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    reviewed_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    decision: Mapped[AgentReviewDecision] = mapped_column(
+        Enum(AgentReviewDecision, values_callable=enum_values),
+        nullable=False,
+        index=True,
+    )
+    edited_output: Mapped[dict] = mapped_column(JSON, default=dict)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    run: Mapped[AgentRun] = relationship(back_populates="reviews")
+    reviewed_by: Mapped[User] = relationship(foreign_keys=[reviewed_by_user_id])
+
+
+class AgentRunOperation(TimestampMixin, Base):
+    __tablename__ = "agent_run_operations"
+    __table_args__ = (
+        UniqueConstraint("run_id", "operation_key", name="uq_agent_run_operation"),
+    )
+
+    # Celery 至少一次投递时，副作用节点先声明幂等操作，再在同一 MySQL 事务内写入成果。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), nullable=False, index=True)
+    operation_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    run: Mapped[AgentRun] = relationship(back_populates="operations")
+
+
+class AgentApproval(TimestampMixin, Base):
+    __tablename__ = "agent_approvals"
+    __table_args__ = (
+        UniqueConstraint("run_id", "action_key", name="uq_agent_approval_action"),
+    )
+
+    # 审批记录是真实权限边界，不能只依赖 Prompt 或前端确认框。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("agent_tasks.id"), nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), nullable=False, index=True)
+    requested_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    decided_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    action_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    risk_level: Mapped[AgentRiskLevel] = mapped_column(
+        Enum(AgentRiskLevel, values_callable=enum_values),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[AgentApprovalStatus] = mapped_column(
+        Enum(AgentApprovalStatus, values_callable=enum_values),
+        default=AgentApprovalStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    request_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    decision_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    note: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentMemory(TimestampMixin, Base):
+    __tablename__ = "agent_memories"
+
+    # 长期记忆只保存用户明确确认的结构化事实，并保留来源、版本和撤销状态。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    scope_id: Mapped[str | None] = mapped_column(String(120), index=True)
+    memory_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    schema_version: Mapped[str] = mapped_column(String(30), nullable=False, default="1.0")
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_reference: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[AgentMemoryStatus] = mapped_column(
+        Enum(AgentMemoryStatus, values_callable=enum_values),
+        default=AgentMemoryStatus.ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OutboxEvent(TimestampMixin, Base):
+    __tablename__ = "outbox_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    aggregate_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    aggregate_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True, index=True)
+    status: Mapped[OutboxEventStatus] = mapped_column(
+        Enum(OutboxEventStatus, values_callable=enum_values),
+        default=OutboxEventStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class GenerationJob(TimestampMixin, Base):
+    __tablename__ = "generation_jobs"
+
+    # 生成任务连接创意方案和外部供应商调用，锁字段用于避免多 worker 重复执行同一任务。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
+    creative_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("creative_plans.id"),
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[GenerationJobKind] = mapped_column(
+        Enum(GenerationJobKind, values_callable=enum_values),
+        nullable=False,
+    )
+    status: Mapped[GenerationJobStatus] = mapped_column(
+        Enum(GenerationJobStatus, values_callable=enum_values),
+        default=GenerationJobStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(default=3, nullable=False)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    locked_by: Mapped[str | None] = mapped_column(String(120))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    product: Mapped[Product] = relationship(back_populates="generation_jobs")
+    creative_plan: Mapped[CreativePlan] = relationship(back_populates="generation_jobs")
+    generated_asset: Mapped[GeneratedAsset | None] = relationship(
+        back_populates="generation_job",
+    )
+    events: Mapped[list["GenerationJobEvent"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="GenerationJobEvent.created_at.desc()",
+    )
+
+
+class GenerationJobEvent(TimestampMixin, Base):
+    __tablename__ = "generation_job_events"
+
+    # 任务事件只记录生命周期状态和安全 payload，不保存供应商密钥或完整外部响应。
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("generation_jobs.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[GenerationJobStatus | None] = mapped_column(
+        Enum(GenerationJobStatus, values_callable=enum_values),
+        index=True,
+    )
+    message: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    worker_id: Mapped[str | None] = mapped_column(String(120))
+
+    job: Mapped[GenerationJob] = relationship(back_populates="events")
+
+
+class KnowledgeDocumentStatus(StrEnum):
+    # 智库导入是分钟级长任务（PDF 解析 + 本地向量化），状态要能支撑工作台进度展示
+    # 与失败重试，所以按阶段建枚举，不用一个布尔字段糊弄。
+    PENDING = "pending"
+    SUBMITTING = "submitting"
+    PARSING = "parsing"
+    SPLITTING = "splitting"
+    RECOGNIZING = "recognizing"
+    EMBEDDING = "embedding"
+    IMPORTING = "importing"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class KnowledgeDocument(TimestampMixin, Base):
+    """掌柜智库资料：归属真源在电商库，智库侧只按 tenant_id 存切片。
+
+    原文必须由本服务留存：智库的 MinIO 只存抽取出的图片，原始文档仅落在其
+    output/YYYYMMDD/{task_id}/ 临时目录，随时会被清理。少了这一份，"引用出处
+    指向具体文档"就无从落地。
+    """
+
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    # 可选归属商品：Agent 生成该商品文案时用它缩小检索范围
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
+    uploaded_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    # 落盘路径相对 UPLOAD_DIR，不写绝对路径，避免内网目录结构进入响应体
+    stored_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(120))
+    size_bytes: Mapped[int | None] = mapped_column()
+
+    # 智库侧标识：kb_doc_id = sha1("tenant|file_title")，用于后续删除/重传对齐
+    kb_task_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    kb_doc_id: Mapped[str | None] = mapped_column(String(64))
+    kb_item_name: Mapped[str | None] = mapped_column(String(255))
+
+    status: Mapped[KnowledgeDocumentStatus] = mapped_column(
+        Enum(KnowledgeDocumentStatus, values_callable=enum_values),
+        default=KnowledgeDocumentStatus.PENDING,
+        index=True,
+    )
+    status_message: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    chunk_count: Mapped[int | None] = mapped_column()
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    workspace: Mapped["Workspace"] = relationship(back_populates="knowledge_documents")
+
+
+class RagSourceKind(StrEnum):
+    """自建知识库的入库方式。文件解析不在这一层做，见 ADR 0010。"""
+
+    TEXT = "text"
+    MARKDOWN = "markdown"
+
+
+class RagDocument(TimestampMixin, Base):
+    """自建 RAG 的原文。
+
+    与 `knowledge_documents` 的分工是刻意的：那张表存**上传的文件**并交给外部智库
+    解析（PDF/OCR 那些脏活），这张表存**已经能直接切分的文本**。两条链路并存——
+    外部服务不可用时（`KB_*` 未配置），自建链路仍能跑通，这就是「独立化」的含义。
+
+    原文必须自己留一份：引用要能指回具体位置（char_start/char_end），只存向量
+    等于把证据丢掉。
+    """
+
+    __tablename__ = "rag_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source_kind: Mapped[RagSourceKind] = mapped_column(
+        Enum(RagSourceKind, values_callable=enum_values),
+        default=RagSourceKind.TEXT,
+        nullable=False,
+    )
+    # 长文超过 MySQL TEXT 的 64KB，这里在 MySQL 上用 LONGTEXT，其他方言退回 Text
+    content: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    char_count: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    chunk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    # 没配 embedding 端点时这三列保持原样，检索会退化成纯词法，且 stats 会如实报告
+    embedding_model: Mapped[str | None] = mapped_column(String(80))
+    embedded_chunks: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    chunks: Mapped[list["RagChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        # 不能用 passive_deletes=True：那等于把删子行的责任交给数据库的 ON DELETE
+        # CASCADE，而 SQLite 默认不开外键约束，测试与轻量部署都会留下孤儿切片。
+        passive_deletes=False,
+    )
+
+
+class RagChunk(Base):
+    """切片。
+
+    `embedding` 存 JSON 数组而不是向量库：这一层的规模上限是"万级切片"，
+    超出就该换 pgvector / Milvus（ADR 0009 写了换的时机）。在那之前，多引一个
+    向量库换来的是运维成本，不是检索质量。
+    """
+
+    __tablename__ = "rag_chunks"
+    __table_args__ = (UniqueConstraint("document_id", "ordinal", name="uq_rag_chunk_ordinal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("rag_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    content: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    # 指向原文的字符区间：引用能落到"第几个字到第几个字"，而不是"某篇文档里可能有"
+    char_start: Mapped[int] = mapped_column(default=0, nullable=False)
+    char_end: Mapped[int] = mapped_column(default=0, nullable=False)
+    token_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    embedding: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    document: Mapped["RagDocument"] = relationship(back_populates="chunks")
+
+
+class QaSessionSource(StrEnum):
+    """质检会话的来源。导入与仓内拉取必须能区分，否则报告说不清数据从哪来。"""
+
+    IMPORT = "import"
+    AGENT = "agent"
+
+
+class QaRole(StrEnum):
+    """会话双方。上游叫 user/bot，这里统一成客户与坐席。"""
+
+    CUSTOMER = "customer"
+    AGENT = "agent"
+
+
+class QaSession(TimestampMixin, Base):
+    """一次待质检的客服会话。
+
+    `external_id` 是上游会话的唯一标识，与 workspace 组成幂等键：同一批数据重复
+    导入只会更新，不会把排行榜的分母悄悄翻倍。
+    """
+
+    __tablename__ = "qa_sessions"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "external_id", name="uq_qa_session_external"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    external_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    # 被考核对象（坐席）。排行榜按它聚合，所以不允许为空。
+    agent_name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    channel: Mapped[str] = mapped_column(String(40), default="manual", nullable=False)
+    source_kind: Mapped[QaSessionSource] = mapped_column(
+        Enum(QaSessionSource, values_callable=enum_values),
+        default=QaSessionSource.IMPORT,
+        nullable=False,
+        index=True,
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    message_count: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    messages: Mapped[list["QaMessage"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="QaMessage.seq",
+        passive_deletes=False,
+    )
+    score: Mapped["QaScore | None"] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        uselist=False,
+        passive_deletes=False,
+    )
+
+
+class QaMessage(Base):
+    """会话里的一句话。`seq` 是从 0 开始的顺序号，证据回溯全靠它。"""
+
+    __tablename__ = "qa_messages"
+    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_qa_message_seq"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("qa_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    seq: Mapped[int] = mapped_column(nullable=False)
+    role: Mapped[QaRole] = mapped_column(Enum(QaRole, values_callable=enum_values), nullable=False)
+    content: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    # 客户发言是这条会话的"问题"，时间戳用来算首响时效；缺失时该规则明确判 0 而不是猜。
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped["QaSession"] = relationship(back_populates="messages")
+
+
+class QaScore(TimestampMixin, Base):
+    """一份会话评分快照。
+
+    只保留最新一份（`session_id` 唯一），但记下 `rule_version`：规则改动后必须
+    显式重算，历史报告的分数不会自己变——这点对考核类功能是硬要求。
+    """
+
+    __tablename__ = "qa_scores"
+    __table_args__ = (UniqueConstraint("session_id", name="uq_qa_score_session"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("qa_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    total: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False, index=True)
+    grade: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    # 逐条规则的结果与证据都在这里：报告要能指出"哪句话、哪一项扣了分"
+    breakdown: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    redline: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+    redline_rules: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    scored_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    session: Mapped["QaSession"] = relationship(back_populates="score")
+
+
+class CsTicketStatus(StrEnum):
+    """转人工工单的状态。只做三态，不做工作流引擎。"""
+
+    OPEN = "open"
+    CLAIMED = "claimed"
+    CLOSED = "closed"
+
+
+class CsTicket(TimestampMixin, Base):
+    """转人工工单。
+
+    为什么落在独立表而不是给会话加个 `needs_handoff` 标记：工单要有自己的生命周期
+    （待认领 → 处理中 → 关闭）、优先级和原因，会长出 SLA 统计。塞进会话表里，
+    这些字段迟早会互相污染。
+    """
+
+    __tablename__ = "cs_tickets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_conversations.id"), nullable=False, index=True
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    reason: Mapped[str] = mapped_column(String(200), nullable=False)
+    # 触发原因的分类键（要求人工 / 情绪负面 / 超出知识范围），用于聚合"为什么转人工"
+    trigger: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    priority: Mapped[str] = mapped_column(String(10), default="normal", nullable=False, index=True)
+    status: Mapped[CsTicketStatus] = mapped_column(
+        Enum(CsTicketStatus, values_callable=enum_values),
+        default=CsTicketStatus.OPEN,
+        nullable=False,
+        index=True,
+    )
+    summary: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ContractStatus(StrEnum):
+    """合同的评审阶段。
+
+    只有四态：收下、抽完、复核完、失败。合同审批不是工作流引擎，
+    状态一多就会出现"这个状态该谁处理"的扯皮。
+    """
+
+    UPLOADED = "uploaded"
+    EXTRACTED = "extracted"  # 条款抽好了、规则也打过一轮，等语义复核
+    REVIEWED = "reviewed"
+    FAILED = "failed"
+
+
+class ContractRiskLevel(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class Contract(TimestampMixin, Base):
+    """一份待审合同。
+
+    原文落在 `text` 而不是只留文件路径：条款风险报告要能指回原句，而原句必须
+    和打分时看到的那一版一致。文件可以被替换，落库的文本不会。
+    """
+
+    __tablename__ = "contracts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(nullable=False)
+    # 同一个文件重复上传时用它做提示，不做强制去重（合同改一版是常态）
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    text: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    status: Mapped[ContractStatus] = mapped_column(
+        Enum(ContractStatus, values_callable=enum_values),
+        default=ContractStatus.UPLOADED,
+        nullable=False,
+        index=True,
+    )
+    extract_error: Mapped[str | None] = mapped_column(String(300))
+    clause_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    risk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    high_risk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    # 0-100，分越高越该拦。口径写在 app/contracts/scoring.py 里
+    risk_score: Mapped[int] = mapped_column(default=0, nullable=False, index=True)
+    risk_level: Mapped[ContractRiskLevel] = mapped_column(
+        Enum(ContractRiskLevel, values_callable=enum_values),
+        default=ContractRiskLevel.LOW,
+        nullable=False,
+        index=True,
+    )
+    # 语义复核的结论。规则看得出"账期 90 天"，看不出"验收标准由甲方单方决定"
+    summary: Mapped[str | None] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"))
+    semantic_checked: Mapped[bool] = mapped_column(default=False, nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    clauses: Mapped[list["ContractClause"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="ContractClause.ordinal"
+    )
+    risks: Mapped[list["ContractRisk"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="ContractRisk.id"
+    )
+    approvals: Mapped[list["ContractApproval"]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan", order_by="ContractApproval.id"
+    )
+
+
+class ContractClause(Base):
+    """切出来的一条条款。
+
+    `char_start` / `char_end` 指向 `contracts.text` 的字符区间——和 RAG 的切片一样，
+    引用必须能落回原文，否则报告里的"第 3 条"没人能核对。
+    """
+
+    __tablename__ = "contract_clauses"
+    __table_args__ = (UniqueConstraint("contract_id", "ordinal", name="uq_contract_clause_ordinal"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ordinal: Mapped[int] = mapped_column(nullable=False)
+    heading: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    text: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    char_start: Mapped[int] = mapped_column(nullable=False)
+    char_end: Mapped[int] = mapped_column(nullable=False)
+
+    contract: Mapped["Contract"] = relationship(back_populates="clauses")
+
+
+class ContractRisk(Base):
+    """一条风险。`source` 区分它是规则抓的还是模型读出来的。
+
+    这个区分不是为了好看：规则命中的可以逐条摊开争论"这条规则对不对"，模型读出的
+    只能提供理由和原文，不能复现。混在一起会让整份报告的可信度都掉到模型水平。
+    """
+
+    __tablename__ = "contract_risks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    clause_ordinal: Mapped[int | None] = mapped_column()
+    clause_kind: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    rule_key: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
+    severity: Mapped[ContractRiskLevel] = mapped_column(
+        Enum(ContractRiskLevel, values_callable=enum_values), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    detail: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    # 触发这条判断的原句。没有原句的风险条目一律不许进报告
+    quote: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    source: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    # 建议改法。审批意见里最有用的一栏
+    suggestion: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+
+    contract: Mapped["Contract"] = relationship(back_populates="risks")
+
+
+class ContractApproval(Base):
+    """审批留痕。只追加，不修改。
+
+    审批意见是给别人看的证据，改一次就失去意义。要改结论就再写一条，
+    历史两条都在——这也是"谁在什么时候批了什么风险"能对上的前提。
+    """
+
+    __tablename__ = "contract_approvals"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    decision: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    comment: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    decided_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    # 审批当时的风险快照。事后规则改版，也要能说明"当时看到的是这 5 条"
+    risk_snapshot: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    contract: Mapped["Contract"] = relationship(back_populates="approvals")
+
+
+class LiveSessionStatus(StrEnum):
+    """一场直播的处理状态。转写进来 → 切片挑完 → 有人定过。"""
+
+    TRANSCRIBED = "transcribed"
+    CUT = "cut"
+    REVIEWED = "reviewed"
+
+
+class LiveClipStatus(StrEnum):
+    SUGGESTED = "suggested"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class LiveSession(TimestampMixin, Base):
+    """一场直播的转写。
+
+    `transcript` 是 `[{start, end, text}]` 的数组，不是一段大文本：切片的边界要落在
+    句子上，而句子的时间戳是唯一能对上视频的锚点。存成一段文本再回头找时间码，
+    等于把已经有的信息扔掉又重新猜一遍。
+    """
+
+    __tablename__ = "live_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    product_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(default=0, nullable=False)
+    transcript: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[LiveSessionStatus] = mapped_column(
+        Enum(LiveSessionStatus, values_callable=enum_values),
+        default=LiveSessionStatus.TRANSCRIBED,
+        nullable=False,
+        index=True,
+    )
+    clip_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    clips: Mapped[list["LiveClip"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="LiveClip.score.desc()"
+    )
+
+
+class LiveClip(Base):
+    """一个切片候选。
+
+    `reasons` 存的是"这条为什么值得切"，逐条列出命中的卖点词。没有理由的候选
+    在剪辑台上等于噪声——运营没有时间一个个点开看。
+    """
+
+    __tablename__ = "live_clips"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("live_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    start_seconds: Mapped[int] = mapped_column(nullable=False)
+    end_seconds: Mapped[int] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    hook: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    transcript: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), nullable=False)
+    score: Mapped[int] = mapped_column(default=0, nullable=False, index=True)
+    reasons: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    status: Mapped[LiveClipStatus] = mapped_column(
+        Enum(LiveClipStatus, values_callable=enum_values),
+        default=LiveClipStatus.SUGGESTED,
+        nullable=False,
+        index=True,
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    session: Mapped["LiveSession"] = relationship(back_populates="clips")
+
+
+class FinetuneDatasetStatus(StrEnum):
+    DRAFT = "draft"
+    READY = "ready"
+    EXPORTED = "exported"
+
+
+class FinetuneJobStatus(StrEnum):
+    REGISTERED = "registered"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class FinetuneDataset(TimestampMixin, Base):
+    """一份训练数据集。
+
+    `stats` 存的是构建时的分布快照（来源占比、质量分层、平均长度）。改了样本
+    之后分布会变，所以要看当时那份训练数据长什么样，只能靠这份快照。
+    """
+
+    __tablename__ = "finetune_datasets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(40), default="sft_chat", nullable=False)
+    status: Mapped[FinetuneDatasetStatus] = mapped_column(
+        Enum(FinetuneDatasetStatus, values_callable=enum_values),
+        default=FinetuneDatasetStatus.DRAFT,
+        nullable=False,
+        index=True,
+    )
+    sample_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    stats: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    builder_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    samples: Mapped[list["FinetuneSample"]] = relationship(
+        back_populates="dataset", cascade="all, delete-orphan"
+    )
+
+
+class FinetuneSample(Base):
+    """一条训练样本。
+
+    `fingerprint` 是 messages 的哈希，用来去重。同一句话在不同场次里出现三次，
+    进了训练集就会让模型对这句话过拟合——去重必须在入库前做，不能指望训练框架。
+    """
+
+    __tablename__ = "finetune_samples"
+    __table_args__ = (
+        UniqueConstraint("dataset_id", "fingerprint", name="uq_finetune_sample_fingerprint"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    dataset_id: Mapped[int] = mapped_column(
+        ForeignKey("finetune_datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    # 指向原始记录，如 "qa_session:12" / "cs_conversation:5" / "contract_risk:9"
+    source_ref: Mapped[str] = mapped_column(String(80), nullable=False)
+    quality: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    messages: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    dataset: Mapped["FinetuneDataset"] = relationship(back_populates="samples")
+
+
+class FinetuneJob(Base):
+    """一次训练任务。
+
+    本平台只登记，不执行。`status` 由人推进（或由外部训练服务回调），
+    `metrics` 与 `eval` 都是人工/脚本填进来的台账——正因为不执行，
+    这里必须如实显示"未运行"，而不是假装有进度。
+    """
+
+    __tablename__ = "finetune_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id"), nullable=False, index=True)
+    dataset_id: Mapped[int] = mapped_column(
+        ForeignKey("finetune_datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    base_model: Mapped[str] = mapped_column(String(120), nullable=False)
+    params: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[FinetuneJobStatus] = mapped_column(
+        Enum(FinetuneJobStatus, values_callable=enum_values),
+        default=FinetuneJobStatus.REGISTERED,
+        nullable=False,
+        index=True,
+    )
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # 评测：同一批题在 base 与 tuned 上的得分，以及差值
+    eval_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    note: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT(), "mysql"), default="", nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    dataset: Mapped["FinetuneDataset"] = relationship()

@@ -1,0 +1,830 @@
+import {
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  FlaskConical,
+  ImageIcon,
+  KeyRound,
+  Users,
+  Video,
+} from "lucide-react";
+import type { ReactNode } from "react";
+
+import { getCurrentUser, getModelSettings, getModelSettingsError, getModelUsage, getUsers } from "@/lib/api";
+import Link from "next/link";
+import { getAuthToken } from "@/lib/session";
+import type { DailyUsage, GenerationUsage, ModelUsage, UserAccount } from "@/types";
+
+import { DeleteUserButton } from "@/components/delete-user-button";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+
+type SettingsPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+/** 渲染模型设置页面；在服务端加载业务数据，并把交互交给对应表单或客户端组件。 */
+export default async function SettingsPage({ searchParams }: SettingsPageProps) {
+  const token = await getAuthToken();
+  const currentUser = token ? await getCurrentUser(token) : null;
+  const canEdit = Boolean(currentUser?.permissions.can_edit);
+  const canManageUsers = Boolean(currentUser?.permissions.can_manage_users);
+  // 用户列表只有具备管理权限时才请求，避免只读/普通运营账号看到成员管理数据。
+  // 累计 token 用量属于只读聚合，所有登录用户都可查看，与编辑/管理权限无关。
+  const [settings, users, usage] = await Promise.all([
+    getModelSettings(),
+    canManageUsers ? getUsers() : Promise.resolve([]),
+    getModelUsage(),
+  ]);
+  const params = (await searchParams) ?? {};
+  const saveStatus = scalar(params.save);
+  const testStatus = scalar(params.status);
+  const testTarget = scalar(params.test);
+  const testMessage = scalar(params.message);
+  const userStatus = scalar(params.user);
+
+  if (!settings) {
+    // 读取失败时诊断一次失败原因：401/403 属于未登录或登录过期，其余按网络/后端不可达处理。
+    const settingsError = await getModelSettingsError();
+    const isUnauthorized = settingsError === "unauthorized";
+    return (
+      <main className="flex flex-col gap-6">
+        <div className="flex flex-col gap-6">
+          <div className="mt-6 flex flex-col gap-4 rounded-[10px] border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-5 text-sm text-[var(--danger)]">
+            {isUnauthorized ? (
+              <>
+                <p>未登录或登录已过期，请先登录。</p>
+                <Link
+                  href="/login"
+                  className="inline-flex h-9 w-fit items-center justify-center rounded-[10px] bg-gradient-primary px-4 text-xs font-semibold text-white shadow-[var(--shadow-btn)] transition hover:opacity-90"
+                >
+                  前往登录
+                </Link>
+              </>
+            ) : (
+              <p>模型配置读取失败，请确认后端服务已经启动。</p>
+            )}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
+        <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="mt-5 text-sm font-medium text-[var(--primary)]">Model Settings</p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-normal text-slate-950 sm:text-3xl">
+              模型配置中心
+            </h1>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatusPill
+              label="文本模型"
+              value={settings.text.model || "未配置"}
+              active={settings.text.has_api_key && Boolean(settings.text.model)}
+            />
+            <StatusPill
+              label="图片模型"
+              value={settings.image.model || "未配置"}
+              active={settings.image.has_api_key && Boolean(settings.image.model)}
+            />
+            <StatusPill
+              label="视频模型"
+              value={settings.video.model || "未配置"}
+              active={settings.video.has_api_key && Boolean(settings.video.model)}
+            />
+          </div>
+        </header>
+
+        {usage ? (
+          <TokenUsageCard usage={usage} />
+        ) : (
+          <ReadOnlyNotice message="用量读取失败，请确认后端服务可用后刷新重试。" />
+        )}
+
+        {saveStatus ? (
+          <Notice
+            ok={saveStatus === "ok"}
+            message={saveStatus === "ok" ? "配置已保存，下一次调用会使用新模型。" : "配置保存失败。"}
+          />
+        ) : null}
+
+        {testStatus ? (
+          <Notice
+            ok={testStatus === "ok"}
+            message={`${testTargetLabel(testTarget)}测试${
+              testStatus === "ok" ? "通过" : "失败"
+            }：${testMessage || "-"}`}
+          />
+        ) : null}
+
+        {userStatus ? (
+          <Notice
+            ok={
+              userStatus === "created" ||
+              userStatus === "deleted" ||
+              userStatus === "restored" ||
+              userStatus === "disabled"
+            }
+            message={
+              userStatus === "created"
+                ? "用户已创建。"
+                : userStatus === "deleted"
+                  ? "用户已删除（物理删除）。"
+                  : userStatus === "restored"
+                    ? "用户已恢复启用。"
+                    : userStatus === "disabled"
+                      ? "用户已停用，可在列表中随时恢复。"
+                      : userStatus === "delete_blocked"
+                        ? "该用户存在 Agent 任务/会话等审计记录，无法物理删除，请改用「停用」。"
+                        : userStatus === "status_failed"
+                          ? "停用/恢复失败：不能操作自己，也不能停用最后一个可用 owner。"
+                          : "用户操作失败，请检查邮箱是否重复或权限不足。"
+            }
+          />
+        ) : null}
+
+        <form
+          id="model-settings-form"
+          action="/settings/update"
+          method="post"
+          className="grid gap-6 xl:grid-cols-3"
+        >
+          <section className="rounded-md border border-slate-200 bg-white p-5">
+            <SectionTitle
+              icon={<Bot className="h-5 w-5" aria-hidden="true" />}
+              title="文本模型"
+              subtitle="用于诊断、主图方案、视频脚本和复盘。"
+              tone="bg-slate-950"
+            />
+            <div className="mt-5 space-y-4">
+              <TextInput
+                label="Base URL"
+                name="text_base_url"
+                defaultValue={settings.text.base_url}
+                placeholder="https://api.deepseek.com"
+              />
+              <TextInput
+                label="Model"
+                name="text_model"
+                defaultValue={settings.text.model}
+                placeholder="deepseek-v4-pro"
+              />
+              <SecretInput
+                label="API Key"
+                name="text_api_key"
+                masked={settings.text.api_key_masked}
+              />
+            </div>
+          </section>
+
+          <section className="rounded-md border border-slate-200 bg-white p-5">
+            <SectionTitle
+              icon={<ImageIcon className="h-5 w-5" aria-hidden="true" />}
+              title="图片模型"
+              subtitle="用于主图方案的一键出图。"
+              tone="bg-emerald-600"
+            />
+            <div className="mt-5 space-y-4">
+              <TextInput
+                label="Provider"
+                name="image_provider"
+                defaultValue={settings.image.provider}
+                placeholder="dashscope"
+              />
+              <TextInput
+                label="Model"
+                name="image_model"
+                defaultValue={settings.image.model}
+                placeholder="wan2.6-t2i"
+              />
+              <TextInput
+                label="Base URL"
+                name="image_base_url"
+                defaultValue={settings.image.base_url}
+                placeholder="https://dashscope.aliyuncs.com/api/v1"
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextInput
+                  label="Size"
+                  name="image_size"
+                  defaultValue={settings.image.size}
+                  placeholder="1280*1280"
+                />
+                <TextInput
+                  label="业务空间 ID"
+                  name="image_workspace_id"
+                  defaultValue={settings.image.workspace_id}
+                  placeholder="llm-..."
+                />
+                <NumberInput
+                  label="轮询间隔秒"
+                  name="image_poll_interval_seconds"
+                  defaultValue={settings.image.poll_interval_seconds}
+                />
+                <NumberInput
+                  label="最大轮询次数"
+                  name="image_poll_max_attempts"
+                  defaultValue={settings.image.poll_max_attempts}
+                />
+              </div>
+              <SecretInput
+                label="API Key"
+                name="image_api_key"
+                masked={settings.image.api_key_masked}
+              />
+            </div>
+          </section>
+
+          <section className="rounded-md border border-slate-200 bg-white p-5">
+            <SectionTitle
+              icon={<Video className="h-5 w-5" aria-hidden="true" />}
+              title="视频模型"
+              subtitle="用于短视频脚本的一键成片。"
+              tone="bg-violet-600"
+            />
+            <div className="mt-5 space-y-4">
+              <ProviderSelect
+                label="Provider"
+                name="video_provider"
+                defaultValue={settings.video.provider}
+              />
+              <TextInput
+                label="Model"
+                name="video_model"
+                defaultValue={settings.video.model}
+                placeholder="wan2.6-t2v"
+              />
+              <TextInput
+                label="Base URL"
+                name="video_base_url"
+                defaultValue={settings.video.base_url}
+                placeholder="https://dashscope.aliyuncs.com/api/v1"
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextInput
+                  label="Size"
+                  name="video_size"
+                  defaultValue={settings.video.size}
+                  placeholder="1280*720"
+                />
+                <NumberInput
+                  label="时长秒"
+                  name="video_duration"
+                  defaultValue={settings.video.duration}
+                />
+                <TextInput
+                  label="业务空间 ID"
+                  name="video_workspace_id"
+                  defaultValue={settings.video.workspace_id}
+                  placeholder="llm-..."
+                />
+                <NumberInput
+                  label="轮询间隔秒"
+                  name="video_poll_interval_seconds"
+                  defaultValue={settings.video.poll_interval_seconds}
+                />
+                <NumberInput
+                  label="最大轮询次数"
+                  name="video_poll_max_attempts"
+                  defaultValue={settings.video.poll_max_attempts}
+                />
+              </div>
+              <SecretInput
+                label="API Key"
+                name="video_api_key"
+                masked={settings.video.api_key_masked}
+              />
+            </div>
+          </section>
+        </form>
+
+        {canManageUsers ? (
+          <UserManagementPanel users={users} currentUserId={currentUser?.id} />
+        ) : (
+          <ReadOnlyNotice message="当前账号没有用户管理权限，只能查看模型配置状态。" />
+        )}
+
+        {canEdit ? (
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Button
+              type="submit"
+              form="model-settings-form"
+              size="lg"
+            >
+              <KeyRound className="h-4 w-4" aria-hidden="true" />
+              保存配置
+            </Button>
+            <TestButton target="text" label="测试文本模型" />
+            <TestButton target="image" label="测试图片模型" />
+            <TestButton target="video" label="测试视频模型" />
+          </div>
+        ) : (
+          <ReadOnlyNotice message="当前账号为只读权限，模型保存和测试按钮已隐藏。" />
+        )}
+      </div>
+    </main>
+  );
+}
+
+/** 渲染 ReadOnlyNotice 组件，集中展示读取onlynotice所需的数据、状态和操作入口。 */
+function ReadOnlyNotice({ message }: { message: string }) {
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+      {message}
+    </div>
+  );
+}
+
+/** 渲染 TokenUsageCard 组件，按模型类型只读展示累计用量与费用估算。 */
+function TokenUsageCard({ usage }: { usage: ModelUsage }) {
+  return (
+    <section className="rounded-md border border-slate-200 bg-white p-5">
+      <SectionTitle
+        icon={<KeyRound className="h-5 w-5" aria-hidden="true" />}
+        title="用量统计（按模型类型）"
+        subtitle="文本按 token、图片/视频按生成次数计量；费用按 api/.env 的 PRICE_* 单价估算"
+        tone="bg-indigo-600"
+      />
+      <div className="mt-5 grid gap-3 lg:grid-cols-3">
+        <div className="card px-4 py-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-900">文本模型</p>
+            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">Token 计费</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <UsageMetric label="输入" value={usage.text.input_tokens} />
+            <UsageMetric label="输出" value={usage.text.output_tokens} />
+            <UsageMetric label="合计" value={usage.text.total_tokens} />
+            <UsageMetric label="调用次数" value={usage.text.calls} />
+          </div>
+          <CostLine value={usage.cost.text} />
+        </div>
+        <GenerationUsageColumn title="图片模型" usage={usage.image} note="按张计费" cost={usage.cost.image} />
+        <GenerationUsageColumn
+          title="视频模型"
+          usage={usage.video}
+          note="按秒计费"
+          cost={usage.cost.video}
+          seconds={usage.video_seconds}
+        />
+      </div>
+      <UsageTrend trend={usage.trend} />
+      <p className="mt-4 text-xs text-slate-500">
+        预计总费用 {formatCny(usage.cost.total)} · 累计任务数 {usage.runs_count.toLocaleString("en-US")} · 仅估算，不代表供应商真实账单
+      </p>
+    </section>
+  );
+}
+
+/** 渲染 UsageTrend 组件，用纯 CSS 柱状图展示近 N 天文本 token 趋势。 */
+function UsageTrend({ trend }: { trend: DailyUsage[] }) {
+  if (trend.length === 0) {
+    return null;
+  }
+  const maxTokens = Math.max(1, ...trend.map((item) => item.text_total_tokens));
+  const imageTotal = trend.reduce((sum, item) => sum + item.image_succeeded, 0);
+  const videoTotal = trend.reduce((sum, item) => sum + item.video_succeeded, 0);
+  return (
+    <div className="mt-5 rounded-md border border-slate-200 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-slate-900">近 {trend.length} 天文本 Token 趋势</p>
+        <span className="text-xs text-slate-500">峰值 {maxTokens.toLocaleString("en-US")} token / 天</span>
+      </div>
+      <div className="mt-4 flex h-24 items-end gap-1">
+        {trend.map((item) => {
+          // 用固定像素高度避免百分比高度在 flex 容器里解析失败；0 值也留 2px 底线，保持日期可见。
+          const heightPx =
+            item.text_total_tokens === 0
+              ? 2
+              : Math.max(4, Math.round((item.text_total_tokens / maxTokens) * 96));
+          return (
+            <div
+              key={item.date}
+              className="group flex flex-1 items-end"
+              title={`${item.date}：${item.text_total_tokens.toLocaleString("en-US")} token / ${item.text_calls} 次调用`}
+            >
+              <div
+                className="w-full rounded-t bg-indigo-500/70 transition group-hover:bg-indigo-600"
+                style={{ height: `${heightPx}px` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex justify-between text-xs text-slate-400">
+        <span>{trend[0]?.date ?? ""}</span>
+        <span>{trend[trend.length - 1]?.date ?? ""}</span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
+        <span>区间图片生成 {imageTotal.toLocaleString("en-US")} 次</span>
+        <span>区间视频生成 {videoTotal.toLocaleString("en-US")} 次</span>
+      </div>
+    </div>
+  );
+}
+
+/** 渲染 UsageMetric 组件，统一数字的本地化格式。 */
+function UsageMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold text-slate-950">{value.toLocaleString("en-US")}</p>
+    </div>
+  );
+}
+
+/** 渲染 CostLine 组件，展示单个模型的预计费用。 */
+function CostLine({ value }: { value: number }) {
+  return (
+    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2">
+      <span className="text-xs text-slate-500">预计费用</span>
+      <span className="text-sm font-semibold text-[var(--primary)]">{formatCny(value)}</span>
+    </div>
+  );
+}
+
+/** 渲染 GenerationUsageColumn 组件，展示图片/视频的生成次数与费用（不按 token 计费）。 */
+function GenerationUsageColumn({
+  title,
+  usage,
+  note,
+  cost,
+  seconds,
+}: {
+  title: string;
+  usage: GenerationUsage;
+  note: string;
+  cost: number;
+  seconds?: number;
+}) {
+  return (
+    <div className="card px-4 py-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-900">{title}</p>
+        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{note}</span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <UsageMetric label="生成成功" value={usage.succeeded} />
+        <UsageMetric label="生成失败" value={usage.failed} />
+      </div>
+      <p className="mt-2 text-xs text-slate-500">
+        {typeof seconds === "number"
+          ? `累计时长 ${seconds.toLocaleString("en-US")} 秒（不产生 token）`
+          : "单位：次（不产生 token）"}
+      </p>
+      <CostLine value={cost} />
+    </div>
+  );
+}
+
+/** 按金额大小选择小数位，避免小额费用显示成 0.00。 */
+function formatCny(value: number): string {
+  return value >= 1 ? `¥${value.toFixed(2)}` : `¥${value.toFixed(4)}`;
+}
+
+/** 渲染 UserManagementPanel 组件，集中展示用户管理面板所需的数据、状态和操作入口。 */
+function UserManagementPanel({
+  users,
+  currentUserId,
+}: {
+  users: UserAccount[];
+  currentUserId?: number;
+}) {
+  return (
+    <section className="rounded-md border border-slate-200 bg-white p-5">
+      <SectionTitle
+        icon={<Users className="h-5 w-5" aria-hidden="true" />}
+        title="用户与权限"
+        subtitle="按角色控制编辑、成员管理和投放确认权限"
+        tone="bg-sky-700"
+      />
+
+      <form action="/settings/users/create" method="post" className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr_180px_180px_auto] lg:items-end">
+        <TextInput label="邮箱" name="email" defaultValue="" placeholder="ops@example.com" />
+        <TextInput label="姓名" name="display_name" defaultValue="" placeholder="运营同学" />
+        <RoleSelect />
+        <label className="block">
+          <span className="text-sm font-medium text-slate-700">初始密码</span>
+          <Input
+            name="password"
+            type="password"
+            minLength={8}
+            placeholder="可留空"
+            className="mt-2 h-11"
+          />
+        </label>
+        <Button
+          type="submit"
+          size="lg"
+        >
+          添加用户
+        </Button>
+      </form>
+
+      <div className="mt-5 overflow-hidden rounded-md border border-slate-200">
+        <div className="grid grid-cols-[1fr_100px_80px_1fr_160px] bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-500">
+          <span>用户</span>
+          <span>角色</span>
+          <span>状态</span>
+          <span>权限</span>
+          <span className="text-right">操作</span>
+        </div>
+        {users.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-slate-500">
+            暂无用户。先添加 owner 或 operator，再逐步接入登录鉴权。
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-200">
+            {users.map((user) => (
+              <div
+                key={user.id}
+                className="grid grid-cols-[1fr_100px_80px_1fr_160px] items-center px-4 py-3 text-sm"
+              >
+                <div>
+                  <p className="font-medium text-slate-950">
+                    {user.display_name}
+                    {user.id === currentUserId ? (
+                      <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">
+                        当前账号
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">{user.email}</p>
+                </div>
+                <span className="text-slate-700">{roleLabel(user.role)}</span>
+                <span className={user.status === "active" ? "text-emerald-700" : "text-slate-400"}>
+                  {user.status === "active" ? "启用" : "已停用"}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {permissionBadges(user).map((badge) => (
+                    <span key={badge} className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                      {badge}
+                    </span>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  {user.status === "active" ? (
+                    <form action="/settings/users/status" method="post">
+                      <input type="hidden" name="user_id" value={user.id} />
+                      <input type="hidden" name="status" value="disabled" />
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        size="sm"
+                        disabled={user.id === currentUserId}
+                      >
+                        停用
+                      </Button>
+                    </form>
+                  ) : (
+                    <form action="/settings/users/status" method="post">
+                      <input type="hidden" name="user_id" value={user.id} />
+                      <input type="hidden" name="status" value="active" />
+                      <Button type="submit" variant="outline" size="sm">
+                        恢复
+                      </Button>
+                    </form>
+                  )}
+                  <DeleteUserButton
+                    userId={user.id}
+                    displayName={user.display_name}
+                    disabled={user.id === currentUserId}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+
+/** 渲染 SectionTitle 组件，集中展示section标题所需的数据、状态和操作入口。 */
+function SectionTitle({
+  icon,
+  title,
+  subtitle,
+  tone,
+}: {
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
+  tone: string;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className={`flex h-10 w-10 items-center justify-center rounded-md text-white ${tone}`}>
+        {icon}
+      </div>
+      <div>
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <p className="text-sm text-slate-500">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+/** 渲染 StatusPill 组件，集中展示状态pill所需的数据、状态和操作入口。 */
+function StatusPill({ label, value, active }: { label: string; value: string; active: boolean }) {
+  return (
+    <div className="card px-4 py-3">
+      <p className="text-xs text-slate-500">{label}</p>
+      <div className="mt-1 flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${active ? "bg-gradient-success" : "bg-[var(--muted)]"}`} />
+        <p className="text-sm font-semibold text-slate-900">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+/** 渲染 Notice 组件，集中展示notice所需的数据、状态和操作入口。 */
+function Notice({ ok, message }: { ok: boolean; message: string }) {
+  const Icon = ok ? CheckCircle2 : AlertCircle;
+  return (
+    <div
+      className={`flex items-start gap-3 rounded-md border p-4 text-sm ${
+        ok
+          ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+          : "border-rose-200 bg-rose-50 text-rose-800"
+      }`}
+    >
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+/** 渲染 TextInput 组件，集中展示文本input所需的数据、状态和操作入口。 */
+function TextInput({
+  label,
+  name,
+  defaultValue,
+  placeholder,
+}: {
+  label: string;
+  name: string;
+  defaultValue: string;
+  placeholder: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <Input
+        name={name}
+        defaultValue={defaultValue}
+        placeholder={placeholder}
+        className="mt-2 h-11"
+      />
+    </label>
+  );
+}
+
+/** 渲染 NumberInput 组件，集中展示数值input所需的数据、状态和操作入口。 */
+function NumberInput({
+  label,
+  name,
+  defaultValue,
+}: {
+  label: string;
+  name: string;
+  defaultValue: number;
+}) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <Input
+        name={name}
+        type="number"
+        min="1"
+        defaultValue={defaultValue}
+        className="mt-2 h-11"
+      />
+    </label>
+  );
+}
+
+/** 渲染 ProviderSelect 组件，集中展示provider选择所需的数据、状态和操作入口。 */
+function ProviderSelect({
+  label,
+  name,
+  defaultValue,
+}: {
+  label: string;
+  name: string;
+  defaultValue: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <select
+        name={name}
+        defaultValue={defaultValue || "dashscope"}
+        className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+      >
+        <option value="dashscope">DashScope / 通义万相</option>
+        <option value="jimeng">Jimeng / 即梦</option>
+        <option value="custom">Custom</option>
+      </select>
+    </label>
+  );
+}
+
+/** 渲染 RoleSelect 组件，集中展示角色选择所需的数据、状态和操作入口。 */
+function RoleSelect() {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">角色</span>
+      <select
+        name="role"
+        defaultValue="operator"
+        className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+      >
+        <option value="owner">Owner</option>
+        <option value="operator">Operator</option>
+        <option value="viewer">Viewer</option>
+      </select>
+    </label>
+  );
+}
+
+/** 渲染 SecretInput 组件，集中展示secretinput所需的数据、状态和操作入口。 */
+function SecretInput({ label, name, masked }: { label: string; name: string; masked: string }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      {/* 密钥输入框不回填明文，只显示脱敏占位；留空时后端保留原 key。 */}
+      <Input
+        name={name}
+        type="password"
+        placeholder={masked ? `当前：${masked}，留空则保持不变` : "粘贴 API Key"}
+        className="mt-2 h-11"
+      />
+    </label>
+  );
+}
+
+/** 渲染 TestButton 组件，集中展示test按钮所需的数据、状态和操作入口。 */
+function TestButton({ target, label }: { target: "text" | "image" | "video"; label: string }) {
+  return (
+    <form action="/settings/test" method="post">
+      <input type="hidden" name="target" value={target} />
+      <Button
+        type="submit"
+        variant="outline"
+        size="lg"
+        className="w-full sm:w-auto"
+      >
+        <FlaskConical className="h-4 w-4" aria-hidden="true" />
+        {label}
+      </Button>
+    </form>
+  );
+}
+
+/** 标量，把不可信表单或 JSON 值转换为页面逻辑可安全使用的类型。 */
+function scalar(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/** 把testtarget状态映射为中文显示文本，保持页面口径一致。 */
+function testTargetLabel(target: string | undefined) {
+  if (target === "image") {
+    return "图片模型";
+  }
+  if (target === "video") {
+    return "视频模型";
+  }
+  return "文本模型";
+}
+
+/** 把角色状态映射为中文显示文本，保持页面口径一致。 */
+function roleLabel(role: UserAccount["role"]): string {
+  if (role === "owner") {
+    return "Owner";
+  }
+  if (role === "viewer") {
+    return "Viewer";
+  }
+  return "Operator";
+}
+
+/** 权限badges，封装当前页面重复使用的转换或展示规则，并统一处理空值边界。 */
+function permissionBadges(user: UserAccount): string[] {
+  const badges = ["可查看"];
+  if (user.permissions.can_edit) {
+    badges.push("可编辑");
+  }
+  if (user.permissions.can_manage_users) {
+    badges.push("管理用户");
+  }
+  if (user.permissions.can_confirm_ad_actions) {
+    badges.push("确认投放");
+  }
+  return badges;
+}
